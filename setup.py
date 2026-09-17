@@ -10,7 +10,6 @@ setup(
         "through DataStore's consumer query API."
     ),
     packages=find_namespace_packages(include=["ckanext*"]),
-    namespace_packages=["ckanext"],
     install_requires=[
         # ckanext-harvest, ckanext-datastore, and ckanext-xloader are
         # already installed/enabled on data.gov.gr (confirmed via

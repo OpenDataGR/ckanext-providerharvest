@@ -1,0 +1,6 @@
+# Force LF for everything under docker/. Without this, a Windows checkout
+# with core.autocrlf=true silently rewrites these to CRLF, which breaks
+# the postgres/entrypoint shell scripts (e.g. "$'\r': command not found")
+# and can leak a trailing \r into values read from .env -- both only show
+# up once you actually run the stack.
+docker/** text eol=lf

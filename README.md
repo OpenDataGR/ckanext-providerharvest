@@ -64,7 +64,82 @@ Model section, that verification happens against a **Docker Compose CKAN
 2.11.3 replica** matching data.gov.gr's confirmed extension set
 (`harvest`, `datastore`, `xloader`, `scheming_datasets`, `dcat`, ...) --
 not against the live site, which this project has no direct access to.
-That replica is not yet set up in this repo.
+That replica lives under [`docker/`](docker/); see "Local Docker replica"
+below for how to bring it up.
+
+### Local Docker replica
+
+`docker/` brings up CKAN 2.11.3 plus the confirmed data.gov.gr extension
+set (`harvest`, `datastore`, `xloader`, `scheming_datasets`, `dcat`,
+`fluent`) and this extension itself, built from this repo checkout, with
+`providerharvest` enabled after `harvest`/`datastore` per the install
+instructions below. Requires Docker Engine with the Compose v2 plugin
+(`docker compose`, not the standalone `docker-compose`).
+
+```bash
+cd docker
+cp .env.example .env      # edit CKAN_PROVIDERHARVEST_MASTER_KEY etc. if needed
+docker compose build
+docker compose up -d
+```
+
+Five services come up: `ckan` (the web app), `ckan-worker` (the
+ckanext-harvest gather/fetch queue consumers, a `harvester run`
+scheduler loop, and the `ckan jobs worker` process xloader's bulk loads
+actually run in -- see `docker/ckan/worker-entrypoint.sh`), `db`
+(Postgres, with the separate `datastore_ro` read-only role
+`ckanext-datastore` needs), `solr`, and `redis`.
+
+Wait for `ckan` to report healthy (`docker compose ps`), then verify:
+
+- **Plugins enabled**: `curl http://localhost:5000/api/3/action/status_show`
+  should list `harvest`, `datastore`, `xloader`, `scheming_datasets`,
+  `dcat`, `fluent`, and `providerharvest` under `extensions`.
+- **This extension's tables exist** (created automatically via
+  `model.meta.init_tables()`, called from `IConfigurable.configure`):
+
+  ```bash
+  docker compose exec db psql -U postgres -d ckandb -c '\dt providerharvest_*'
+  ```
+
+  Expect `providerharvest_provider_source`,
+  `providerharvest_field_mapping_profile`, `providerharvest_secret`, and
+  `providerharvest_outbound_request_log`.
+- **The plugin loads without a traceback**: CKAN loads all enabled
+  plugins at process start, before it serves any requests -- so the
+  `status_show` check above only succeeding at all (and the `ckan`
+  container's healthcheck going green) already proves
+  `ckanext.providerharvest` imported and `configure()` ran cleanly. To
+  double-check directly, `docker compose logs ckan` during startup
+  should show no traceback mentioning `ckanext.providerharvest`.
+
+CKAN's admin UI/API is at `http://localhost:5000` (sysadmin login from
+`CKAN_SYSADMIN_NAME`/`CKAN_SYSADMIN_PASSWORD` in `.env`). Solr is
+reachable at `http://localhost:8983/solr/ckan` for debugging the search
+index.
+
+To tear down (keeping the `.env`-configured data volumes):
+
+```bash
+docker compose down
+```
+
+To also wipe the Postgres/Solr/storage volumes (start completely fresh):
+
+```bash
+docker compose down -v
+```
+
+The `.env.example` values are fixed, non-secret local-dev placeholders
+(including the envelope-encryption master key) checked in so a fresh
+clone reproduces the same replica -- rotate all of them before adapting
+this compose file for anything beyond a disposable local instance.
+
+Full functional harvest-job testing against mock HTTP/SFTP providers
+(register a source, run a job, confirm rows land in DataStore) is not
+yet automated here -- see DESIGN.md's "Verification" section for that
+end-to-end scenario, which still needs to be scripted against this
+replica.
 
 ## Installing into a CKAN instance
 
