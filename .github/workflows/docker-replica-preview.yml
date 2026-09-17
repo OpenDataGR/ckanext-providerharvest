@@ -1,0 +1,95 @@
+name: Docker replica preview (temporary public tunnel)
+
+# Manual-only: brings up the docker/ CKAN replica on GitHub's runner and
+# exposes it through a short-lived cloudflared "quick tunnel" so a human
+# can open it in a browser and click around. Deliberately has NO push/
+# pull_request trigger -- this briefly makes a live CKAN instance, using
+# .env.example's placeholder sysadmin credentials, reachable by anyone who
+# has the generated trycloudflare.com URL (only visible to this private
+# repo's collaborators, via this run's logs/summary) for the run's
+# duration. Only ever trigger this when someone specifically wants an
+# interactive look at the replica -- for automated verification, use
+# docker-replica.yml instead, which never exposes anything externally.
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes to keep the tunnel open before tearing down"
+        required: false
+        default: "10"
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare .env
+        run: cp .env.example .env
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Start stack
+        run: docker compose up -d
+
+      - name: Wait for the ckan service to report healthy
+        run: |
+          for i in $(seq 1 40); do
+            cid="$(docker compose ps -q ckan)"
+            status="$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null || echo starting)"
+            echo "ckan health: $status ($i/40)"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "ckan never became healthy" >&2
+          docker compose logs ckan --tail=200
+          exit 1
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL --output /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i /tmp/cloudflared.deb
+
+      - name: Open a temporary public tunnel to CKAN
+        run: |
+          . ./.env
+          cloudflared tunnel --url http://localhost:5000 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
+          url=""
+          for i in $(seq 1 20); do
+            url="$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n1 || true)"
+            [ -n "$url" ] && break
+            sleep 3
+          done
+          if [ -z "$url" ]; then
+            echo "Failed to establish tunnel" >&2
+            cat /tmp/cloudflared.log
+            exit 1
+          fi
+          {
+            echo "### CKAN replica preview"
+            echo
+            echo "**$url**"
+            echo
+            echo "Sysadmin login: \`$CKAN_SYSADMIN_NAME\` / \`$CKAN_SYSADMIN_PASSWORD\` (placeholder .env.example credentials)."
+            echo
+            echo "This tunnel and the whole stack tear down automatically in ${{ inputs.minutes }} minute(s)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Preview URL: $url"
+
+      - name: Keep the tunnel open for exploration
+        run: sleep "$(( ${{ inputs.minutes }} * 60 ))"
+
+      - name: Dump service logs
+        if: always()
+        run: docker compose logs --tail=300
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

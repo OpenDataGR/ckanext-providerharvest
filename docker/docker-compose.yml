@@ -1,0 +1,102 @@
+# Local Docker Compose replica of data.gov.gr's CKAN 2.11.3 environment,
+# used to verify the parts of ckanext-providerharvest that need a real
+# CKAN instance (model layer, logic/action.py, logic/auth.py,
+# harvesters/base_generic.py, plugin.py -- see README.md and DESIGN.md's
+# "Deployment Model" / "Verification" sections).
+#
+# Modeled on the official ckan/ckan-docker reference compose file
+# (https://github.com/ckan/ckan-docker), adapted to: use xloader instead
+# of datapusher, add ckanext-harvest + a queue-consumer worker service,
+# add ckanext-scheming/-dcat/-fluent, and build ckanext-providerharvest
+# itself into the image from this repo checkout instead of pulling it
+# from a registry.
+#
+# Usage: see README.md's "Local Docker replica" section.
+
+volumes:
+  ckan_storage:
+  pg_data:
+  solr_data:
+
+services:
+
+  ckan:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/ckan/Dockerfile
+    image: ckanext-providerharvest-ckan:local
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      solr:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${CKAN_PORT_HOST:-5000}:5000"
+    volumes:
+      - ckan_storage:/var/lib/ckan
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:5000/api/action/status_show"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 90s
+
+  ckan-worker:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/ckan/Dockerfile
+    image: ckanext-providerharvest-ckan:local
+    command: ["/srv/app/worker-entrypoint.sh"]
+    env_file:
+      - .env
+    depends_on:
+      ckan:
+        condition: service_healthy
+    volumes:
+      - ckan_storage:/var/lib/ckan
+    restart: unless-stopped
+
+  db:
+    build:
+      context: postgresql/
+    env_file:
+      - .env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  solr:
+    platform: linux/amd64
+    image: ckan/ckan-solr:${SOLR_IMAGE_VERSION:-2.11-solr9}
+    ports:
+      - "127.0.0.1:${SOLR_PORT_HOST:-8983}:8983"
+    volumes:
+      - solr_data:/var/solr
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8983/solr/ckan/select"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: "redis:${REDIS_VERSION:-7-alpine}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

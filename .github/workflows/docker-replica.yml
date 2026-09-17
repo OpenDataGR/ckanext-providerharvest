@@ -1,0 +1,83 @@
+name: Docker replica verification
+
+# Runs the docker/ Compose stack (CKAN 2.11.3 + the confirmed data.gov.gr
+# extension set + ckanext-providerharvest) on GitHub's hosted Ubuntu
+# runner, since Docker isn't available in this project's own dev
+# environment. Scoped to paths that actually affect the replica or the
+# CKAN-coupled code it exercises, plus workflow_dispatch for on-demand
+# runs, to keep this off the default per-push/PR path and its minutes
+# usage low on the private repo's free Actions allowance.
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [master]
+    paths:
+      - "docker/**"
+      - "ckanext/providerharvest/**"
+      - "setup.py"
+      - ".github/workflows/docker-replica.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare .env
+        run: cp .env.example .env
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Start stack
+        run: docker compose up -d
+
+      - name: Wait for the ckan service to report healthy
+        run: |
+          for i in $(seq 1 40); do
+            cid="$(docker compose ps -q ckan)"
+            status="$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null || echo starting)"
+            echo "ckan health: $status ($i/40)"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "ckan never became healthy" >&2
+          docker compose logs ckan --tail=200
+          exit 1
+
+      - name: Confirm the confirmed data.gov.gr plugin set is active
+        run: |
+          curl -sf http://localhost:5000/api/3/action/status_show | tee /tmp/status.json
+          python3 -c "
+          import json
+          data = json.load(open('/tmp/status.json'))
+          active = set(data['result']['extensions'])
+          required = {'harvest', 'datastore', 'xloader', 'scheming_datasets', 'dcat', 'fluent', 'providerharvest'}
+          missing = required - active
+          assert not missing, f'Missing plugins: {sorted(missing)}'
+          print('All required plugins active:', sorted(required))
+          "
+
+      - name: Confirm providerharvest tables were created on startup
+        run: |
+          docker compose exec -T db psql -U postgres -d ckandb -c '\dt providerharvest_*' | tee /tmp/tables.txt
+          for t in providerharvest_provider_source providerharvest_field_mapping_profile providerharvest_secret providerharvest_outbound_request_log; do
+            grep -q "$t" /tmp/tables.txt || { echo "missing table: $t" >&2; exit 1; }
+          done
+
+      - name: Run the pytest suite inside the ckan container
+        run: docker compose exec -T -w /srv/app/src/ckanext-providerharvest ckan pytest ckanext/providerharvest/tests
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs --tail=300
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
