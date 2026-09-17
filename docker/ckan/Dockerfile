@@ -25,6 +25,15 @@ FROM ckan/ckan-base:2.11.3-py3.10
 # installs -- then drop back to the runtime user below.
 USER root
 
+# psql client -- ckan-base only ships psycopg2 (the Python driver), not
+# the CLI. worker-entrypoint.sh pipes `ckan datastore set-permissions`'s
+# generated SQL into it (that command has no equivalent that applies the
+# SQL itself, only one that prints it -- per ckanext-datastore's own
+# install docs, a psql client is exactly what's expected to consume it).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends postgresql-client && \
+    rm -rf /var/lib/apt/lists/*
+
 # --- ckanext-harvest: scheduling, job/queue infra, harvest source model ---
 RUN pip3 install -e 'git+https://github.com/ckan/ckanext-harvest.git@master#egg=ckanext-harvest' && \
     pip3 install -r ${SRC_DIR}/ckanext-harvest/pip-requirements.txt
