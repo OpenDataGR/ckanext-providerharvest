@@ -100,3 +100,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # Throwaway mock HTTP provider for the end-to-end harvest-job
+  # integration test (ckanext/providerharvest/tests/integration/) --
+  # DESIGN.md's "Verification" section calls for one mock HTTP provider.
+  # Not something a real provider registration would ever point at.
+  mock-provider:
+    image: "python:${MOCK_PROVIDER_PYTHON_VERSION:-3.12-alpine}"
+    volumes:
+      - ./mock-provider/serve.py:/serve.py:ro
+    command: ["python3", "/serve.py"]
+    restart: unless-stopped

@@ -135,11 +135,19 @@ The `.env.example` values are fixed, non-secret local-dev placeholders
 clone reproduces the same replica -- rotate all of them before adapting
 this compose file for anything beyond a disposable local instance.
 
-Full functional harvest-job testing against mock HTTP/SFTP providers
-(register a source, run a job, confirm rows land in DataStore) is not
-yet automated here -- see DESIGN.md's "Verification" section for that
-end-to-end scenario, which still needs to be scripted against this
-replica.
+Full functional harvest-job testing against a mock HTTP provider (register
+a source, run a job, confirm rows land in DataStore, org-scoping) is
+automated in
+[`ckanext/providerharvest/tests/integration/test_e2e_harvest.py`](ckanext/providerharvest/tests/integration/test_e2e_harvest.py),
+run as part of the same `pytest ckanext/providerharvest/tests` command
+above (a `conftest.py` skips this subdirectory when `ckan` isn't
+importable, so it's a no-op outside this replica). It exercises the real
+gather/fetch/import pipeline against
+[`docker/mock-provider/`](docker/mock-provider/), a throwaway HTTP JSON
+service, and the already-running `ckan-worker` queue consumers -- nothing
+in the extension itself is mocked. The SFTP/SCP/FTP half of DESIGN.md's
+"Verification" scenario still needs those transports to exist first
+(Phase 1.5).
 
 **CI**: none of this project's own dev machines have Docker available,
 so the boot-and-verify steps above (build, bring up, confirm plugins +
@@ -147,8 +155,9 @@ tables, run the pytest suite inside the `ckan` container) run instead in
 [`.github/workflows/docker-replica.yml`](.github/workflows/docker-replica.yml)
 on GitHub's hosted runners, on PRs touching `docker/`,
 `ckanext/providerharvest/`, or `setup.py`, and on demand via
-`workflow_dispatch`. It does not (yet) cover the full functional
-harvest-job scenario above.
+`workflow_dispatch`. Since that pytest step covers
+`ckanext/providerharvest/tests` as a whole, it includes the functional
+harvest-job scenario above too.
 
 ## Installing into a CKAN instance
 
