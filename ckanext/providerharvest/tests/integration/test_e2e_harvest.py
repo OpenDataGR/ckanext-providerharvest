@@ -145,6 +145,25 @@ class TestFullHarvestFlow:
         )
         print("DEBUG harvest_source_id:", harvest_source_id)
         print("DEBUG all_sources:", all_sources_debug)
+
+        # Distinguish a DB-level vs Solr-search-level cause: ckanext-harvest's
+        # harvest_source_list likely goes through package_search, which
+        # depends on the package actually being indexed into Solr.
+        from ckanext.harvest.model import HarvestSource
+        hs_orm = HarvestSource.get(harvest_source_id)
+        print("DEBUG HarvestSource ORM row:", hs_orm, getattr(hs_orm, "active", None) if hs_orm else None)
+        search_debug = helpers.call_action(
+            "package_search",
+            {"ignore_auth": True},
+            q="*:*",
+            include_private=True,
+            rows=50,
+        )
+        print(
+            "DEBUG package_search all packages:",
+            [(r["name"], r.get("type")) for r in search_debug["results"]],
+            "count:", search_debug["count"],
+        )
         orgs_debug = helpers.call_action(
             "organization_list_for_user",
             dict(editor_ctx),
