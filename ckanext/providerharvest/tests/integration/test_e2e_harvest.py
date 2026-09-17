@@ -66,7 +66,19 @@ def _wait_for_datastore_rows(resource_id: str, expected_count: int, timeout_s: f
     )
 
 
-@pytest.mark.usefixtures("clean_db")
+#: pytest-ckan's `with_plugins` fixture loads exactly this list for the
+#: test's own app/config context -- separate from whatever was already
+#: loaded when the `ckan` CLI process first booted pytest itself, which
+#: is why `provider_source_create` came back as "Action ... not found"
+#: without this even though the container's own ckan.ini has all of these
+#: active. Mirrors CKAN__PLUGINS in docker/.env.example.
+_REQUIRED_PLUGINS = (
+    "harvest datastore xloader scheming_datasets fluent dcat providerharvest"
+)
+
+
+@pytest.mark.ckan_config("ckan.plugins", _REQUIRED_PLUGINS)
+@pytest.mark.usefixtures("with_plugins", "clean_db")
 class TestFullHarvestFlow:
     def test_register_activate_run_and_query_datastore(self):
         org = factories.Organization()
