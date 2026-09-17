@@ -56,9 +56,17 @@ def _wait_for_datastore_rows(resource_id: str, expected_count: int, timeout_s: f
     deadline = time.monotonic() + timeout_s
     last = None
     while time.monotonic() < deadline:
-        last = helpers.call_action("datastore_search", {}, resource_id=resource_id)
-        if len(last["records"]) >= expected_count:
-            return last
+        try:
+            last = helpers.call_action("datastore_search", {}, resource_id=resource_id)
+        except Exception as exc:
+            # Expected/transient until the async harvest job's import_stage
+            # actually runs and calls ensure_datastore_schema -- the
+            # DataStore table for this resource genuinely doesn't exist
+            # yet on the first several polls, not just "no rows".
+            last = exc
+        else:
+            if len(last["records"]) >= expected_count:
+                return last
         time.sleep(2)
     raise AssertionError(
         "DataStore never reached %d row(s) for resource %s within %ss (last result: %r)"
