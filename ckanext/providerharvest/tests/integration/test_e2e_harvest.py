@@ -77,8 +77,18 @@ _REQUIRED_PLUGINS = (
 )
 
 
+#: Deliberately no clean_db fixture here. It drops every table and
+#: recreates only CKAN core's + Alembic-migrated extensions' (e.g.
+#: ckanext-harvest's own) -- this extension's own tables AND
+#: ckanext-datastore's internal `_table_metadata` view are both created
+#: once at process startup, outside that migration chain, so clean_db
+#: breaks datastore entirely for any test after it runs (confirmed:
+#: UndefinedTable on `_table_metadata` the moment xloader's
+#: after_resource_update hook calls datastore_info). Not needed anyway:
+#: each test below uses distinct org/user/source names, and the
+#: container's own initial boot already leaves a clean, fully-set-up DB.
 @pytest.mark.ckan_config("ckan.plugins", _REQUIRED_PLUGINS)
-@pytest.mark.usefixtures("with_plugins", "clean_db")
+@pytest.mark.usefixtures("with_plugins")
 class TestFullHarvestFlow:
     def test_register_activate_run_and_query_datastore(self):
         org = factories.Organization()

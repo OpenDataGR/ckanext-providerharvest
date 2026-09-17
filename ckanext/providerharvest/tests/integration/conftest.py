@@ -12,14 +12,16 @@ pytest.importorskip("ckanext.harvest", reason="integration tests need ckanext-ha
 
 
 @pytest.fixture(autouse=True)
-def _recreate_providerharvest_tables(clean_db):
-    # ckan.tests' clean_db fixture drops every table and recreates only
-    # CKAN core's + any Alembic-migrated extensions' (e.g. ckanext-harvest's
-    # own). This extension's tables are never in that migration chain --
-    # they're created exactly once, at process startup, via
-    # IConfigurable.configure() -> model.meta.init_tables() -- so without
-    # this they simply don't exist for any test after the first clean_db
-    # reset. Depending on clean_db as a fixture parameter (not just via
-    # usefixtures) guarantees this runs after it, not before.
+def _ensure_providerharvest_tables():
+    # Idempotent safety net (checkfirst=True in init_tables itself), not
+    # actually load-bearing under normal circumstances: these tests
+    # deliberately don't use ckan.tests' clean_db fixture (see the note
+    # in test_e2e_harvest.py's class docstring) specifically because it
+    # drops every table and only recreates CKAN core's + Alembic-migrated
+    # extensions' -- both this extension's own tables AND
+    # ckanext-datastore's internal _table_metadata view are casualties of
+    # that (created once at process startup, never in that migration
+    # chain), and there's no supported way to cheaply recreate the latter
+    # from a test. Simpler to just not drop any of it in the first place.
     from ckanext.providerharvest.model.meta import init_tables
     init_tables()
