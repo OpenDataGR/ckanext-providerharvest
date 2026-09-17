@@ -16,6 +16,7 @@ import io
 import json
 import logging
 
+from ckan import model as ckan_model
 from ckan.plugins import toolkit
 from ckanext.harvest.harvesters.base import HarvesterBase
 from ckanext.harvest.model import HarvestObject
@@ -215,7 +216,17 @@ class GenericProviderHarvester(HarvesterBase):
             self._record_failure_and_maybe_notify(source, "mapping_error", str(exc))
             return False
 
-        context = {"model": None, "session": None, "ignore_auth": True, "user": "harvest"}
+        # Not {"model": None, "session": None, ...}: ckanext-datastore's
+        # own actions (datastore_create/datastore_upsert) dereference
+        # context['model'] directly (e.g. for resource lookups) --
+        # passing None instead of the real ckan.model module fails with
+        # "'NoneType' object has no attribute 'query'" the moment a real
+        # DataStore write is attempted, confirmed by actually running a
+        # harvest job for the first time.
+        context = {
+            "model": ckan_model, "session": ckan_model.Session,
+            "ignore_auth": True, "user": "harvest",
+        }
         provider_source = provider_source_model.get_by_harvest_source_id(source.id)
         loader = DataStoreLoader(get_action=toolkit.get_action)
 
