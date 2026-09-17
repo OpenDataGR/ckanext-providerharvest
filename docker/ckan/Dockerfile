@@ -53,7 +53,7 @@ RUN pip3 install -e "${SRC_DIR}/ckanext-providerharvest[dev]"
 # a `harvester run` scheduler loop) -- used as the `command:` override for
 # the `ckan-worker` service in docker-compose.yml; the `ckan` (web) service
 # keeps the base image's default CMD (start_ckan.sh / uwsgi).
-COPY --chown=ckan-sys:ckan-sys worker-entrypoint.sh ${APP_DIR}/worker-entrypoint.sh
+COPY --chown=ckan-sys:ckan-sys docker/ckan/worker-entrypoint.sh ${APP_DIR}/worker-entrypoint.sh
 
 USER root
 RUN chmod +x ${APP_DIR}/worker-entrypoint.sh
