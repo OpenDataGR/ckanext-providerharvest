@@ -140,7 +140,21 @@ class TestFullHarvestFlow:
         )
         assert activated["status"] == "active"
 
+        all_sources_debug = helpers.call_action(
+            "harvest_source_list", {**editor_ctx, "ignore_auth": True}
+        )
+        print("DEBUG harvest_source_id:", harvest_source_id)
+        print("DEBUG all_sources:", all_sources_debug)
+        orgs_debug = helpers.call_action(
+            "organization_list_for_user",
+            dict(editor_ctx),
+            id=editor["name"],
+            permission="update_dataset",
+        )
+        print("DEBUG orgs for editor:", orgs_debug)
+
         mine = helpers.call_action("provider_source_list_mine", editor_ctx)
+        print("DEBUG mine:", mine)
         assert any(s["id"] == harvest_source_id for s in mine)
 
         from ckanext.providerharvest.model import provider_source as provider_source_model
