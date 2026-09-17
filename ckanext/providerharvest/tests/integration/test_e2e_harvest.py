@@ -3,19 +3,25 @@ DESIGN.md's "Verification" section: register a mock HTTP provider, run a
 job, confirm rows land in DataStore -- plus the org-scoping checks noted
 there. This is the piece that was still "not yet scripted" per README.md.
 
-Runs for real against the live stack: the mock-provider HTTP service
-(docker/mock-provider/serve.py), the already-running ckan-worker queue
-consumers picking up the harvest job over Redis, and Postgres/DataStore --
-nothing here is mocked at the Python level except the network-target
-validator (see _allow_private_network below).
+The harvest job itself runs by calling GenericProviderHarvester's
+gather/fetch/import_stage directly in-process, not via the real Redis
+queue ckan-worker consumes from in production: the queue consumer runs
+in a genuinely separate OS process, so the _allow_private_network
+monkeypatch below (needed since mock-provider's compose-network address
+is exactly what the real SSRF-class validator exists to reject) would
+never apply there -- confirmed by first trying the real queue and
+watching gather_stage fail with "resolves to disallowed address" from
+inside ckan-worker's own unpatched process. Calling the stages directly
+is also the standard way ckanext-harvest extensions test a harvester.
+Everything else here (mock-provider itself, Postgres/DataStore) is real.
 """
 
 from __future__ import annotations
 
-import time
-
 import pytest
 from ckan.tests import factories, helpers
+
+from ckanext.providerharvest.harvesters.base_generic import GenericProviderHarvester
 
 MOCK_PROVIDER_URL = "http://mock-provider:8080/records"
 
@@ -50,28 +56,6 @@ def _dataset_defaults(name: str):
         "title_translated": {"en": name},
         "notes_translated": {"en": "Integration test dataset for %s" % name},
     }
-
-
-def _wait_for_datastore_rows(resource_id: str, expected_count: int, timeout_s: float = 60):
-    deadline = time.monotonic() + timeout_s
-    last = None
-    while time.monotonic() < deadline:
-        try:
-            last = helpers.call_action("datastore_search", {}, resource_id=resource_id)
-        except Exception as exc:
-            # Expected/transient until the async harvest job's import_stage
-            # actually runs and calls ensure_datastore_schema -- the
-            # DataStore table for this resource genuinely doesn't exist
-            # yet on the first several polls, not just "no rows".
-            last = exc
-        else:
-            if len(last["records"]) >= expected_count:
-                return last
-        time.sleep(2)
-    raise AssertionError(
-        "DataStore never reached %d row(s) for resource %s within %ss (last result: %r)"
-        % (expected_count, resource_id, timeout_s, last)
-    )
 
 
 #: pytest-ckan's `with_plugins` fixture loads exactly this list for the
@@ -155,14 +139,26 @@ class TestFullHarvestFlow:
         provider_source = provider_source_model.get_by_harvest_source_id(harvest_source_id)
         assert provider_source.ckan_resource_id
 
-        # Enqueue a real harvest job -- picked up by the already-running
-        # ckan-worker gather/fetch consumers (see docker/ckan/worker-entrypoint.sh),
-        # exactly like a scheduled run in production would be.
-        helpers.call_action(
-            "harvest_job_create", sysadmin_ctx, source_id=harvest_source_id
-        )
+        # Run the harvest job directly (see module docstring for why not
+        # via the real queue): gather -> one HarvestObject per record,
+        # then fetch/import each -- the same sequence
+        # ckanext.harvest.queue's consumers drive in production.
+        from ckanext.harvest.model import HarvestJob, HarvestObject, HarvestSource
+        harvest_source_orm = HarvestSource.get(harvest_source_id)
+        job = HarvestJob(source=harvest_source_orm)
+        job.save()
 
-        result = _wait_for_datastore_rows(provider_source.ckan_resource_id, expected_count=3)
+        harvester = GenericProviderHarvester()
+        object_ids = harvester.gather_stage(job)
+        assert object_ids, "gather_stage produced no harvest objects"
+        for object_id in object_ids:
+            harvest_object = HarvestObject.get(object_id)
+            assert harvester.fetch_stage(harvest_object)
+            assert harvester.import_stage(harvest_object)
+
+        result = helpers.call_action(
+            "datastore_search", {}, resource_id=provider_source.ckan_resource_id
+        )
         records_by_id = {r["id"]: r["name"] for r in result["records"]}
         assert records_by_id == {1: "Alpha", 2: "Bravo", 3: "Charlie"}
 
