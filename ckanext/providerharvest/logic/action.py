@@ -57,7 +57,17 @@ def provider_source_list_mine(context, data_dict):
     )
     org_names = {org["name"] for org in orgs}
 
-    all_sources = toolkit.get_action("harvest_source_list")(dict(context), {})
+    # ignore_auth here, not just dict(context): stock ckanext-harvest
+    # gates harvest_source_list behind sysadmin-only auth (the exact
+    # thing this whole extension exists to work around, per
+    # logic/auth.py's module docstring) -- without it, a real org editor
+    # calling this action inherits that denial on the nested call and
+    # always gets back an empty list, regardless of the org-membership
+    # filtering below. That filtering, not this nested call, is the
+    # actual access boundary for this action.
+    all_sources = toolkit.get_action("harvest_source_list")(
+        {**context, "ignore_auth": True}, {}
+    )
     return [s for s in all_sources if s.get("organization", {}).get("name") in org_names]
 
 
