@@ -21,7 +21,15 @@
 set -euo pipefail
 
 CKAN_CLI=(ckan -c "${CKAN_INI}")
-CKAN_WEB_URL="${CKAN_SITE_URL:-http://ckan:5000}"
+# Always the ckan service's in-network address, never CKAN_SITE_URL --
+# that's the public-facing browser URL (http://localhost:5000 in
+# .env.example), which from inside this container means itself, not the
+# ckan container. Using it here made this wait loop poll nothing,
+# forever -- silently stalling every process below it (harvest
+# consumers, ckan jobs worker, sysadmin creation) for the container's
+# entire lifetime, with nothing surfacing the failure since the loop
+# never exits with an error either.
+CKAN_WEB_URL="http://ckan:5000"
 HARVEST_RUN_INTERVAL_SECONDS="${HARVEST_RUN_INTERVAL_SECONDS:-60}"
 
 echo "[worker] waiting for the CKAN web service (${CKAN_WEB_URL}) to answer status_show..."

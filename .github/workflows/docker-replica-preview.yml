@@ -59,14 +59,19 @@ jobs:
           # ckan-worker container's entrypoint, which starts a few seconds
           # later. Opening the tunnel before this finishes lets someone
           # land on a login form for a user that doesn't exist yet.
+          #
+          # Checked over HTTP against the real Action API, not via
+          # `docker compose exec ckan ckan ... user show` -- that CLI
+          # call was found to exit 0 even for a user that doesn't exist,
+          # which made this check a silent no-op the one time it mattered.
           name="$(grep -m1 '^CKAN_SYSADMIN_NAME=' .env | cut -d= -f2-)"
-          for i in $(seq 1 20); do
-            if docker compose exec -T ckan ckan -c /srv/app/ckan.ini user show "$name" >/dev/null 2>&1; then
+          for i in $(seq 1 40); do
+            if curl -sf "http://localhost:5000/api/3/action/user_show?id=${name}" | grep -q '"sysadmin": *true'; then
               exit 0
             fi
             sleep 5
           done
-          echo "sysadmin user '$name' was never created" >&2
+          echo "sysadmin user '$name' was never created (or never granted sysadmin)" >&2
           docker compose logs ckan-worker --tail=200
           exit 1
 
