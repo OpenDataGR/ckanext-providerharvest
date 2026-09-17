@@ -151,7 +151,14 @@ class TestFullHarvestFlow:
         # depends on the package actually being indexed into Solr.
         from ckanext.harvest.model import HarvestSource
         hs_orm = HarvestSource.get(harvest_source_id)
-        print("DEBUG HarvestSource ORM row:", hs_orm, getattr(hs_orm, "active", None) if hs_orm else None)
+        # Not `print(hs_orm)` -- ckanext-harvest's own __str__/__repr__
+        # returns bytes on this version, crashing print() with a TypeError
+        # before it ever reaches this diagnostic's actual point.
+        print(
+            "DEBUG HarvestSource ORM row exists:", hs_orm is not None,
+            "active:", getattr(hs_orm, "active", None),
+            "id:", getattr(hs_orm, "id", None),
+        )
         search_debug = helpers.call_action(
             "package_search",
             {"ignore_auth": True},
