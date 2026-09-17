@@ -140,47 +140,7 @@ class TestFullHarvestFlow:
         )
         assert activated["status"] == "active"
 
-        all_sources_debug = helpers.call_action(
-            "harvest_source_list", {**editor_ctx, "ignore_auth": True}
-        )
-        print("DEBUG harvest_source_id:", harvest_source_id)
-        print("DEBUG all_sources:", all_sources_debug)
-
-        # Distinguish a DB-level vs Solr-search-level cause: ckanext-harvest's
-        # harvest_source_list likely goes through package_search, which
-        # depends on the package actually being indexed into Solr.
-        from ckanext.harvest.model import HarvestSource
-        hs_orm = HarvestSource.get(harvest_source_id)
-        # Not `print(hs_orm)` -- ckanext-harvest's own __str__/__repr__
-        # returns bytes on this version, crashing print() with a TypeError
-        # before it ever reaches this diagnostic's actual point.
-        print(
-            "DEBUG HarvestSource ORM row exists:", hs_orm is not None,
-            "active:", getattr(hs_orm, "active", None),
-            "id:", getattr(hs_orm, "id", None),
-        )
-        search_debug = helpers.call_action(
-            "package_search",
-            {"ignore_auth": True},
-            q="*:*",
-            include_private=True,
-            rows=50,
-        )
-        print(
-            "DEBUG package_search all packages:",
-            [(r["name"], r.get("type")) for r in search_debug["results"]],
-            "count:", search_debug["count"],
-        )
-        orgs_debug = helpers.call_action(
-            "organization_list_for_user",
-            dict(editor_ctx),
-            id=editor["name"],
-            permission="update_dataset",
-        )
-        print("DEBUG orgs for editor:", orgs_debug)
-
         mine = helpers.call_action("provider_source_list_mine", editor_ctx)
-        print("DEBUG mine:", mine)
         assert any(s["id"] == harvest_source_id for s in mine)
 
         from ckanext.providerharvest.model import provider_source as provider_source_model

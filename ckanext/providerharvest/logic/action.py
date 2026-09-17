@@ -55,20 +55,31 @@ def provider_source_list_mine(context, data_dict):
     orgs = toolkit.get_action("organization_list_for_user")(
         dict(context), {"id": user, "permission": "update_dataset"}
     )
-    org_names = {org["name"] for org in orgs}
+    org_ids = {org["id"] for org in orgs}
+    if not org_ids:
+        return []
 
-    # ignore_auth here, not just dict(context): stock ckanext-harvest
-    # gates harvest_source_list behind sysadmin-only auth (the exact
-    # thing this whole extension exists to work around, per
-    # logic/auth.py's module docstring) -- without it, a real org editor
-    # calling this action inherits that denial on the nested call and
-    # always gets back an empty list, regardless of the org-membership
-    # filtering below. That filtering, not this nested call, is the
-    # actual access boundary for this action.
-    all_sources = toolkit.get_action("harvest_source_list")(
-        {**context, "ignore_auth": True}, {}
+    # Not harvest_source_list/package_search: ckanext-harvest deliberately
+    # keeps harvest-source packages out of the Solr search index (they
+    # back a source's *configuration*, not a real dataset) -- confirmed
+    # by direct testing: a `package_search` for the harvest-type package
+    # comes back empty even with include_private + ignore_auth, while the
+    # underlying HarvestSource DB row is unquestionably there and active.
+    # Query the package table directly instead of anything search-backed.
+    from ckan.model import Package, Session
+    packages = (
+        Session.query(Package)
+        .filter(Package.type == "harvest")
+        .filter(Package.state == "active")
+        .filter(Package.owner_org.in_(org_ids))
+        .all()
     )
-    return [s for s in all_sources if s.get("organization", {}).get("name") in org_names]
+    return [
+        toolkit.get_action("harvest_source_show")(
+            {**context, "ignore_auth": True}, {"id": pkg.id}
+        )
+        for pkg in packages
+    ]
 
 
 def provider_source_test_connection(context, data_dict):
