@@ -30,6 +30,21 @@ until wget -qO- "${CKAN_WEB_URL}/api/3/action/status_show" >/dev/null 2>&1; do
 done
 echo "[worker] CKAN web service is up."
 
+# Nothing in the base ckan-base image actually creates a sysadmin from
+# CKAN_SYSADMIN_NAME/PASSWORD/EMAIL -- that assumption in README.md and
+# in this script's own xloader-token step below was never true, it just
+# never got exercised by anything that logs in (CI only hits the Action
+# API, never the login form). Create it here, idempotently, the same
+# place that already depends on it existing.
+CKAN_SYSADMIN_NAME="${CKAN_SYSADMIN_NAME:-ckan_admin}"
+if ! "${CKAN_CLI[@]}" user show "${CKAN_SYSADMIN_NAME}" >/dev/null 2>&1; then
+    echo "[worker] creating sysadmin user ${CKAN_SYSADMIN_NAME}"
+    "${CKAN_CLI[@]}" sysadmin add "${CKAN_SYSADMIN_NAME}" \
+        email="${CKAN_SYSADMIN_EMAIL:-admin@example.com}" \
+        password="${CKAN_SYSADMIN_PASSWORD:?CKAN_SYSADMIN_PASSWORD must be set}" \
+        -y
+fi
+
 # ckanext-xloader's worker needs its own API token to call back into the
 # CKAN action API while a load job runs (see ckanext-xloader README,
 # "Installation" step 5). The web and worker containers each build their

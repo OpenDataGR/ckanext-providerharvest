@@ -52,6 +52,24 @@ jobs:
           docker compose logs ckan --tail=200
           exit 1
 
+      - name: Wait for the sysadmin user to exist
+        run: |
+          # The ckan service being "healthy" only means the web process is
+          # up -- the sysadmin user is actually created by the separate
+          # ckan-worker container's entrypoint, which starts a few seconds
+          # later. Opening the tunnel before this finishes lets someone
+          # land on a login form for a user that doesn't exist yet.
+          name="$(grep -m1 '^CKAN_SYSADMIN_NAME=' .env | cut -d= -f2-)"
+          for i in $(seq 1 20); do
+            if docker compose exec -T ckan ckan -c /srv/app/ckan.ini user show "$name" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "sysadmin user '$name' was never created" >&2
+          docker compose logs ckan-worker --tail=200
+          exit 1
+
       - name: Install cloudflared
         run: |
           curl -fsSL --output /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
