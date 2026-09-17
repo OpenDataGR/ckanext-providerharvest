@@ -21,11 +21,31 @@ from ckanext.providerharvest.model import field_mapping as field_mapping_model
 from ckanext.providerharvest.model import provider_source as provider_source_model
 from ckanext.providerharvest.secrets.envelope import EnvelopeSecretsBackend
 from ckanext.providerharvest.model.secret import SqlAlchemySecretRepository
-from ckanext.providerharvest.logic.schema import provider_source_create_schema
+from ckanext.providerharvest.logic.schema import (
+    NESTED_FIELDS,
+    REQUIRED_NESTED_FIELDS,
+    provider_source_create_schema,
+)
 
 
 def _secrets_backend():
     return EnvelopeSecretsBackend(repository=SqlAlchemySecretRepository())
+
+
+def _pop_nested_fields(data_dict: dict) -> dict:
+    """Pull out the list/dict-valued fields navl_validate can't handle as
+    opaque values (see schema.py's module docstring), validate the
+    required ones are non-empty by hand, and return them separately from
+    what's left to run through navl_validate."""
+    nested = {k: data_dict.pop(k, None) for k in NESTED_FIELDS}
+    errors = {
+        field: ["Missing value"]
+        for field in REQUIRED_NESTED_FIELDS
+        if not nested.get(field)
+    }
+    if errors:
+        raise toolkit.ValidationError(errors)
+    return {k: v for k, v in nested.items() if v is not None}
 
 
 @toolkit.side_effect_free
@@ -100,11 +120,13 @@ def provider_source_create(context, data_dict):
     'pending' status -- it will not run until an admin approves it
     (see provider_source_activate)."""
     toolkit.check_access("provider_source_create", context, data_dict)
+    nested = _pop_nested_fields(data_dict)
     data_dict, errors = toolkit.navl_validate(
         data_dict, provider_source_create_schema(), context
     )
     if errors:
         raise toolkit.ValidationError(errors)
+    data_dict.update(nested)
 
     owner_org = data_dict["owner_org"]
     # The secret's harvest_source_id column is bookkeeping/audit metadata
