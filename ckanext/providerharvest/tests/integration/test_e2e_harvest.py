@@ -90,7 +90,11 @@ class TestFullHarvestFlow:
         )
         sysadmin = factories.Sysadmin()
 
-        editor_ctx = {"user": editor["name"]}
+        # ignore_auth explicitly False throughout this test: it's the
+        # whole point of exercising provider_source_create/_activate as
+        # an actual org editor rather than the test-helper default (see
+        # the note by the pytest.raises block below).
+        editor_ctx = {"user": editor["name"], "ignore_auth": False}
         created = helpers.call_action(
             "provider_source_create",
             editor_ctx,
@@ -109,16 +113,16 @@ class TestFullHarvestFlow:
         assert created["status"] == "pending"
 
         # The approval gate: an org editor cannot self-activate.
+        # ckan.tests.helpers.call_action defaults ignore_auth to True
+        # unless the context says otherwise -- without editor_ctx setting
+        # it False above, this check never actually runs,
+        # provider_source_activate executes for real, and the
+        # *sysadmin's* call further down then collides with the packages
+        # this "denied" call already created.
         with pytest.raises(Exception):
             helpers.call_action(
                 "provider_source_activate", editor_ctx, harvest_source_id=harvest_source_id
             )
-
-        from ckan.model import Package, Session
-        print(
-            "DEBUG existing packages before activate:",
-            [(p.name, p.type, p.state) for p in Session.query(Package).all()],
-        )
 
         sysadmin_ctx = {"user": sysadmin["name"]}
         activated = helpers.call_action(
@@ -158,7 +162,7 @@ class TestFullHarvestFlow:
 
         created = helpers.call_action(
             "provider_source_create",
-            {"user": editor_a["name"]},
+            {"user": editor_a["name"], "ignore_auth": False},
             name="org-a-source",
             owner_org=org_a["id"],
             endpoint_url=MOCK_PROVIDER_URL,
@@ -179,7 +183,7 @@ class TestFullHarvestFlow:
         with pytest.raises(Exception):
             helpers.call_action(
                 "provider_source_test_connection",
-                {"user": editor_b["name"]},
+                {"user": editor_b["name"], "ignore_auth": False},
                 owner_org=org_a["id"],
                 endpoint_url=MOCK_PROVIDER_URL,
                 transport_type="http",
