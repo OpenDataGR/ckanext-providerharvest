@@ -37,6 +37,16 @@ class DataStoreLoader:
             # Existing rows/schema are preserved across repeated calls;
             # this only needs to run once, callers should still guard it
             # with ProviderSourceExtension.datastore_initialized.
+            #
+            # force=True: ckanext-datastore refuses to write to a
+            # resource it considers "read-only" (one with a URL, as
+            # ours has -- ensure_provider_resource sets it to the
+            # provider's endpoint) unless told this is an intentional,
+            # extension-managed write rather than a human's upload-form
+            # edit. Confirmed by actually running a harvest job: without
+            # this, every write failed with ckanext-datastore's own
+            # "Cannot edit read-only resource" error.
+            "force": True,
         })
 
     def upsert_rows(self, context: dict, resource_id: str, rows: list[dict]) -> None:
@@ -46,6 +56,7 @@ class DataStoreLoader:
             "resource_id": resource_id,
             "records": rows,
             "method": "upsert",
+            "force": True,
         })
 
     def load_all(self, context: dict, resource_id: str, rows: Iterable[dict],
