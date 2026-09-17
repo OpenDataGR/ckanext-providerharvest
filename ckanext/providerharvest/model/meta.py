@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime
 
 import sqlalchemy as sa
-from ckan.model.meta import metadata
+from ckan.model.meta import Session, metadata
 from sqlalchemy.orm import registry
 
 mapper_registry = registry()
@@ -80,5 +80,13 @@ outbound_request_log_table = sa.Table(
 def init_tables() -> None:
     """Idempotently create this extension's tables. Called from
     ``plugin.py``'s configure/update_config, same pattern ckanext-harvest
-    itself uses for its own model."""
-    metadata.create_all(bind=metadata.bind, checkfirst=True)
+    itself uses for its own model.
+
+    ``metadata.bind`` is never set on CKAN 2.11's SQLAlchemy 1.4+ engine
+    setup (``MetaData.bind`` is legacy/deprecated there), so use the
+    engine actually bound to CKAN's own scoped Session instead -- the
+    same source ckanext-harvest's own ``model.setup()`` draws from, and
+    reliably already configured by the time a plugin's ``configure()``
+    runs during CKAN's environment/plugin load.
+    """
+    metadata.create_all(bind=Session.get_bind(), checkfirst=True)
