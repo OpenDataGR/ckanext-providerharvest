@@ -114,6 +114,12 @@ class TestFullHarvestFlow:
                 "provider_source_activate", editor_ctx, harvest_source_id=harvest_source_id
             )
 
+        from ckan.model import Package, Session
+        print(
+            "DEBUG existing packages before activate:",
+            [(p.name, p.type, p.state) for p in Session.query(Package).all()],
+        )
+
         sysadmin_ctx = {"user": sysadmin["name"]}
         activated = helpers.call_action(
             "provider_source_activate", sysadmin_ctx, harvest_source_id=harvest_source_id
