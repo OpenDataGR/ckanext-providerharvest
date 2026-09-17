@@ -16,6 +16,15 @@
 # matters more than picking up upstream fixes.
 FROM ckan/ckan-base:2.11.3-py3.10
 
+# ckan-base's default USER is a non-root, non-home-writable account, so a
+# plain `pip3 install` here falls back to a `--user` install into
+# $HOME/.local and fails with a permission error ($HOME/.local isn't
+# creatable under that user). Install all extensions as root -- straight
+# into the image's system site-packages, matching how the official
+# ckan/ckan-docker reference Dockerfile.dev does its own extension
+# installs -- then drop back to the runtime user below.
+USER root
+
 # --- ckanext-harvest: scheduling, job/queue infra, harvest source model ---
 RUN pip3 install -e 'git+https://github.com/ckan/ckanext-harvest.git@master#egg=ckanext-harvest' && \
     pip3 install -r ${SRC_DIR}/ckanext-harvest/pip-requirements.txt
