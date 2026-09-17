@@ -71,6 +71,28 @@ jobs:
             grep -q "$t" /tmp/tables.txt || { echo "missing table: $t" >&2; exit 1; }
           done
 
+      - name: Wait for ckanext-datastore's permissions/_table_metadata
+        run: |
+          # `ckan` reporting healthy only means the web process is up --
+          # `ckan datastore set-permissions` runs as part of the
+          # separate ckan-worker container's own startup sequence
+          # (worker-entrypoint.sh), which can still be mid-flight here.
+          # Without this wait, the integration test's first real
+          # DataStore write can race it and fail with UndefinedTable on
+          # _table_metadata.
+          db="$(grep -m1 '^DATASTORE_DB=' .env | cut -d= -f2-)"
+          for i in $(seq 1 40); do
+            result="$(docker compose exec -T db psql -U postgres -d "$db" -tAc \
+              "SELECT to_regclass('_table_metadata') IS NOT NULL;" 2>/dev/null || true)"
+            if [ "$result" = "t" ]; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "_table_metadata was never created" >&2
+          docker compose logs ckan-worker --tail=200
+          exit 1
+
       - name: Run the pytest suite inside the ckan container
         run: docker compose exec -T -w /srv/app/src/ckanext-providerharvest ckan pytest ckanext/providerharvest/tests
 
