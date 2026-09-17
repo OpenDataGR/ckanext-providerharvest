@@ -215,7 +215,13 @@ def ensure_provider_resource(context, harvest_source: dict, profile: FieldMappin
     is a discoverable catalog entry, not just an un-cataloged endpoint.
     """
     package_dict = dict(profile.dataset_defaults)
-    package_dict.setdefault("name", harvest_source["name"])
+    # NOT harvest_source["name"]: ckanext-harvest's own HarvestSource is
+    # itself backed by a CKAN package with type="harvest" under that
+    # exact name (see the "Creating harvest source" log line at
+    # harvest_source_create time) -- reusing it here collides with that
+    # package 100% of the time, not just occasionally. Matches the
+    # "-api" suffix already used below for the data-service package.
+    package_dict.setdefault("name", "%s-data" % harvest_source["name"])
     package_dict["owner_org"] = harvest_source["organization"]["id"] \
         if isinstance(harvest_source.get("organization"), dict) else harvest_source["owner_org"]
     package_dict["type"] = "dataset"
