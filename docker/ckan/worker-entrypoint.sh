@@ -64,6 +64,22 @@ echo "[worker] ensuring ${CKAN_SYSADMIN_NAME} has sysadmin rights"
 "${CKAN_CLI[@]}" sysadmin add "${CKAN_SYSADMIN_NAME}" \
     || echo "[worker] 'sysadmin add' errored (likely already sysadmin) -- continuing"
 
+# docker-entrypoint-initdb.d/20_create_datastore.sh only creates the
+# datastore_ro role and the datastore database -- CKAN's own install
+# docs are explicit that `ckan datastore set-permissions` still has to
+# run against that database afterwards (it grants the actual table
+# privileges and creates the `_table_metadata` view/trigger functions
+# ckanext-datastore's own action layer depends on, e.g. datastore_info,
+# which ckanext-xloader's after_resource_update hook calls on every
+# resource update). Nothing here ever ran it before, so datastore has
+# never actually been through a real write until something finally
+# exercised it end to end. The generated SQL uses CREATE OR REPLACE and
+# GRANT, so re-running it on a restart is a safe no-op.
+echo "[worker] applying ckanext-datastore permissions/_table_metadata"
+"${CKAN_CLI[@]}" datastore set-permissions | \
+    PGPASSWORD="${POSTGRES_PASSWORD}" psql -v ON_ERROR_STOP=1 \
+        -h db -U "${POSTGRES_USER}" -d "${DATASTORE_DB}"
+
 # ckanext-xloader's worker needs its own API token to call back into the
 # CKAN action API while a load job runs (see ckanext-xloader README,
 # "Installation" step 5). The web and worker containers each build their
