@@ -4,3 +4,4 @@
 # and can leak a trailing \r into values read from .env -- both only show
 # up once you actually run the stack.
 docker/** text eol=lf
+.github/** text eol=lf

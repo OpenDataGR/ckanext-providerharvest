@@ -141,6 +141,15 @@ yet automated here -- see DESIGN.md's "Verification" section for that
 end-to-end scenario, which still needs to be scripted against this
 replica.
 
+**CI**: none of this project's own dev machines have Docker available,
+so the boot-and-verify steps above (build, bring up, confirm plugins +
+tables, run the pytest suite inside the `ckan` container) run instead in
+[`.github/workflows/docker-replica.yml`](.github/workflows/docker-replica.yml)
+on GitHub's hosted runners, on PRs touching `docker/`,
+`ckanext/providerharvest/`, or `setup.py`, and on demand via
+`workflow_dispatch`. It does not (yet) cover the full functional
+harvest-job scenario above.
+
 ## Installing into a CKAN instance
 
 1. `pip install -e .` (or from a built wheel) into the CKAN environment.

@@ -41,8 +41,13 @@ RUN pip3 install -e 'git+https://github.com/ckan/ckanext-dcat.git@master#egg=cka
 # image is self-contained and the whole stack reproduces from a single
 # `docker compose build` against a fresh clone, per DESIGN.md's
 # "Testing Strategy" bar (applies cleanly to a *fresh* copy from scratch).
+# Installed with the `[dev]` extra (pytest) too: this image is explicitly
+# a disposable local/CI replica, never data.gov.gr's real deployment (see
+# the install instructions in README.md for that), so it's fine for it to
+# carry test tooling -- it's what lets `docker compose exec ckan pytest
+# ckanext/providerharvest/tests` verify the CKAN-coupled layer in place.
 COPY --chown=ckan-sys:ckan-sys . ${SRC_DIR}/ckanext-providerharvest
-RUN pip3 install -e ${SRC_DIR}/ckanext-providerharvest
+RUN pip3 install -e "${SRC_DIR}/ckanext-providerharvest[dev]"
 
 # Worker entrypoint (harvest gather/fetch consumers + xloader jobs worker +
 # a `harvester run` scheduler loop) -- used as the `command:` override for
