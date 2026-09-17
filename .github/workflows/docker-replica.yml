@@ -72,7 +72,7 @@ jobs:
           done
 
       - name: Run the pytest suite inside the ckan container
-        run: docker compose exec -T ckan pytest ckanext/providerharvest/tests
+        run: docker compose exec -T -w /srv/app/src/ckanext-providerharvest ckan pytest ckanext/providerharvest/tests
 
       - name: Dump service logs on failure
         if: failure()
