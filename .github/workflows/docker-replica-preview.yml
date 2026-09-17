@@ -59,7 +59,12 @@ jobs:
 
       - name: Open a temporary public tunnel to CKAN
         run: |
-          . ./.env
+          # Not `. ./.env`: CKAN__PLUGINS's value has unquoted spaces,
+          # which docker compose's own env-file parser accepts but bash
+          # can't source (it tries to run the second plugin name as a
+          # command). Pull out just the two values this step needs.
+          CKAN_SYSADMIN_NAME="$(grep -m1 '^CKAN_SYSADMIN_NAME=' .env | cut -d= -f2-)"
+          CKAN_SYSADMIN_PASSWORD="$(grep -m1 '^CKAN_SYSADMIN_PASSWORD=' .env | cut -d= -f2-)"
           cloudflared tunnel --url http://localhost:5000 --no-autoupdate > /tmp/cloudflared.log 2>&1 &
           url=""
           for i in $(seq 1 20); do
