@@ -58,6 +58,15 @@ RUN pip3 install -e 'git+https://github.com/ckan/ckanext-dcat.git@master#egg=cka
 COPY --chown=ckan-sys:ckan-sys . ${SRC_DIR}/ckanext-providerharvest
 RUN pip3 install -e "${SRC_DIR}/ckanext-providerharvest[dev]"
 
+# CKAN core registers its own pytest plugin (ckan/tests/pytest_ckan) as a
+# setuptools entry point the moment `ckan` is importable, so any `pytest`
+# invocation in this image -- even one only targeting this extension's
+# own tests -- auto-loads it and needs its test-only deps
+# (pytest-factoryboy etc.), which the base image's own build doesn't
+# install (those are dev/test-only, not part of CKAN's runtime
+# requirements.txt).
+RUN pip3 install -r ${SRC_DIR}/ckan/dev-requirements.txt
+
 # Worker entrypoint (harvest gather/fetch consumers + xloader jobs worker +
 # a `harvester run` scheduler loop) -- used as the `command:` override for
 # the `ckan-worker` service in docker-compose.yml; the `ckan` (web) service
