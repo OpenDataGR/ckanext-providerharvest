@@ -42,16 +42,27 @@ echo "[worker] CKAN web service is up."
 # CKAN_SYSADMIN_NAME/PASSWORD/EMAIL -- that assumption in README.md and
 # in this script's own xloader-token step below was never true, it just
 # never got exercised by anything that logs in (CI only hits the Action
-# API, never the login form). Create it here, idempotently, the same
-# place that already depends on it existing.
+# API, never the login form). Create it here, the same place that
+# already depends on it existing.
+#
+# Two commands, not one: `ckan sysadmin add` only *promotes* an existing
+# user -- it aborts with "User not found" for a missing one regardless
+# of `-y`, it does not create one inline. `ckan user add` is the command
+# that actually creates the account. Neither call's exit code reliably
+# signals "already exists"/"already sysadmin" in this CKAN version (a
+# `user show` pre-check here previously looked like it worked, but its
+# own exit code was equally unreliable and the guarded block never ran)
+# so just attempt both, unconditionally, and tolerate either erroring
+# because the desired end state already holds.
 CKAN_SYSADMIN_NAME="${CKAN_SYSADMIN_NAME:-ckan_admin}"
-if ! "${CKAN_CLI[@]}" user show "${CKAN_SYSADMIN_NAME}" >/dev/null 2>&1; then
-    echo "[worker] creating sysadmin user ${CKAN_SYSADMIN_NAME}"
-    "${CKAN_CLI[@]}" sysadmin add "${CKAN_SYSADMIN_NAME}" \
-        email="${CKAN_SYSADMIN_EMAIL:-admin@example.com}" \
-        password="${CKAN_SYSADMIN_PASSWORD:?CKAN_SYSADMIN_PASSWORD must be set}" \
-        -y
-fi
+echo "[worker] ensuring user ${CKAN_SYSADMIN_NAME} exists"
+"${CKAN_CLI[@]}" user add "${CKAN_SYSADMIN_NAME}" \
+    email="${CKAN_SYSADMIN_EMAIL:-admin@example.com}" \
+    password="${CKAN_SYSADMIN_PASSWORD:?CKAN_SYSADMIN_PASSWORD must be set}" \
+    || echo "[worker] 'user add' errored (likely already exists) -- continuing"
+echo "[worker] ensuring ${CKAN_SYSADMIN_NAME} has sysadmin rights"
+"${CKAN_CLI[@]}" sysadmin add "${CKAN_SYSADMIN_NAME}" \
+    || echo "[worker] 'sysadmin add' errored (likely already sysadmin) -- continuing"
 
 # ckanext-xloader's worker needs its own API token to call back into the
 # CKAN action API while a load job runs (see ckanext-xloader README,
