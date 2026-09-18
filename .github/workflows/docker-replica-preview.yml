@@ -100,6 +100,31 @@ jobs:
             cat /tmp/cloudflared.log
             exit 1
           fi
+
+          # CKAN is configured with ckan.site_url=http://localhost:5000
+          # (from .env.example) -- some redirects (post-login in
+          # particular) build absolute URLs from that setting rather
+          # than the actual request Host, so without this, logging in
+          # through the tunnel bounces the browser to localhost:5000,
+          # which means nothing outside this runner. Repoint it at the
+          # tunnel's real hostname and restart CKAN so the change
+          # actually takes effect (ckan.ini is only read at process
+          # start, editing the file alone doesn't affect the already-
+          # running uwsgi workers).
+          echo "Repointing ckan.site_url at $url and restarting CKAN..."
+          docker compose exec -T -e NEW_SITE_URL="$url" ckan \
+            sh -c 'ckan config-tool "$CKAN_INI" "ckan.site_url=$NEW_SITE_URL"'
+          docker compose restart ckan
+
+          echo "Waiting for CKAN to report healthy again after the restart..."
+          for i in $(seq 1 40); do
+            cid="$(docker compose ps -q ckan)"
+            status="$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null || echo starting)"
+            echo "ckan health: $status ($i/40)"
+            [ "$status" = "healthy" ] && break
+            sleep 5
+          done
+
           {
             echo "### CKAN replica preview"
             echo
