@@ -16,8 +16,13 @@ in the file-listing/reading mechanics SCP's protocol actually allows:
   * ``open_entry`` has no equivalent of SFTP's streamed file handle --
     SCP is a whole-file push/pull protocol, not a seek/chunk one -- so it
     downloads to a throwaway local temp file (removed the moment the
-    caller closes it) and returns that for reading, rather than holding
-    the whole file in memory at once.
+    caller closes it) and returns that for reading via
+    ``transport._local_download.TempFileHandle``, rather than holding
+    the whole file in memory at once. That handle must be genuinely
+    seekable, not just readable -- CKAN's own resource uploader seeks to
+    measure the file's size before copying it, confirmed by a real CI
+    failure the first version of this file's own handle class didn't
+    implement ``seek()`` at all.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ import scp as scp_module
 
 from ckanext.providerharvest.audit import OutboundRequestEvent
 from ckanext.providerharvest.secrets.base import SecretBundle
+from ckanext.providerharvest.transport._local_download import TempFileHandle
 from ckanext.providerharvest.transport.base import Entry, Page, Transport
 from ckanext.providerharvest.transport.ssh_common import (
     DEFAULT_PORT,
@@ -72,34 +78,6 @@ def _default_command_runner(transport: "paramiko.Transport", command: str, timeo
         return stdout
     finally:
         channel.close()
-
-
-class _TempFileHandle:
-    """A real file handle to a downloaded-then-discarded temp copy -- see
-    ``open_entry``'s reasoning in the module docstring for why SCP can't
-    offer a true streamed handle the way SFTP does."""
-
-    def __init__(self, path: str):
-        self._path = path
-        self._fh = open(path, "rb")
-
-    def read(self, size: int = -1) -> bytes:
-        return self._fh.read(size)
-
-    def close(self) -> None:
-        try:
-            self._fh.close()
-        finally:
-            try:
-                os.remove(self._path)
-            except OSError:
-                pass
-
-    def __enter__(self) -> "_TempFileHandle":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
 
 
 class ScpTransport(Transport):
@@ -248,7 +226,7 @@ class ScpTransport(Transport):
                 close = getattr(client, "close", None)
                 if close:
                     close()
-            return _TempFileHandle(local_path)
+            return TempFileHandle(local_path)
         except Exception as exc:  # noqa: BLE001
             error = str(exc)
             try:

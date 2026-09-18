@@ -1,21 +1,7 @@
-import io
-
 import pytest
 
 from ckanext.providerharvest.secrets.base import SecretBundle
 from ckanext.providerharvest.transport.ftp import FTPTransport, PlainFtpNotAcknowledgedError
-
-
-class FakeSocket:
-    def __init__(self, content: bytes):
-        self._content = content
-        self.closed = False
-
-    def makefile(self, mode):
-        return io.BytesIO(self._content)
-
-    def close(self):
-        self.closed = True
 
 
 class FakeFtpClient:
@@ -24,11 +10,10 @@ class FakeFtpClient:
         self.login_calls = []
         self.prot_p_called = False
         self.quit_called = False
-        self.voidresp_called = False
         self._mlsd_listing = list(mlsd_listing)
         self._files = files or {}
         self.login_error = login_error
-        self.transfercmd_calls = []
+        self.retrbinary_calls = []
 
     def connect(self, host, port, timeout=None):
         self.connected = (host, port, timeout)
@@ -44,16 +29,10 @@ class FakeFtpClient:
     def mlsd(self, path=""):
         return iter(self._mlsd_listing)
 
-    def voidcmd(self, cmd):
-        pass
-
-    def transfercmd(self, cmd):
-        self.transfercmd_calls.append(cmd)
+    def retrbinary(self, cmd, callback):
+        self.retrbinary_calls.append(cmd)
         remote_path = cmd.split(" ", 1)[1]
-        return FakeSocket(self._files[remote_path])
-
-    def voidresp(self):
-        self.voidresp_called = True
+        callback(self._files[remote_path])
 
     def quit(self):
         self.quit_called = True
@@ -141,7 +120,9 @@ def test_list_entries_second_page_is_empty():
     assert second.next_cursor is None
 
 
-def test_open_entry_streams_and_finalizes_on_close():
+def test_open_entry_downloads_to_a_temp_file_and_cleans_up_on_close():
+    import os
+
     from ckanext.providerharvest.transport.base import Entry
 
     client = FakeFtpClient(files={"/exports/data-2024.csv": b"id,name\n1,Alpha\n"})
@@ -149,11 +130,34 @@ def test_open_entry_streams_and_finalizes_on_close():
     with transport:
         handle = transport.open_entry(Entry(ref="/exports/data-2024.csv", metadata={}))
         content = handle.read()
+        local_path = handle._path
+        assert os.path.exists(local_path)
         handle.close()
+        assert not os.path.exists(local_path)
 
     assert content == b"id,name\n1,Alpha\n"
-    assert client.transfercmd_calls == ["RETR /exports/data-2024.csv"]
-    assert client.voidresp_called is True
+    assert client.retrbinary_calls == ["RETR /exports/data-2024.csv"]
+
+
+def test_open_entry_handle_is_seekable():
+    # CKAN's own resource uploader seeks to measure the file size before
+    # copying it -- a raw FTP data-connection socket can't support that,
+    # confirmed by a real CI failure with the first (streamed-socket)
+    # version of this method.
+    from ckanext.providerharvest.transport.base import Entry
+
+    client = FakeFtpClient(files={"/exports/data-2024.csv": b"id,name\n1,Alpha\n"})
+    transport, _ = _transport(client=client)
+    with transport:
+        handle = transport.open_entry(Entry(ref="/exports/data-2024.csv", metadata={}))
+        try:
+            handle.seek(0, 2)  # SEEK_END
+            size = handle.tell()
+            handle.seek(0)
+            assert size == len(b"id,name\n1,Alpha\n")
+            assert handle.read() == b"id,name\n1,Alpha\n"
+        finally:
+            handle.close()
 
 
 def test_on_request_reports_connect_and_list_events():

@@ -21,25 +21,36 @@ Security properties this transport is responsible for maintaining:
   * The network target is (re-)validated via ``logic.validators`` on
     every ``connect()``, same requirement as every other transport.
   * ``list_entries`` uses MLSD (RFC 3659's structured directory listing,
-    supported by essentially every modern FTP server) rather than
-    parsing legacy ``LIST`` output, avoiding a whole class of
-    format-parsing bugs plain-text directory listings are prone to.
-  * ``open_entry`` streams the file over the FTP data connection (no
-    local temp file, no full in-memory read) via ``transfercmd()``'s raw
-    socket, wrapped as a real file-like handle.
+    supported by every modern FTP server *except* vsftpd, notably --
+    confirmed the hard way via a real CI run against a vsftpd test
+    server, which rejected it outright with "500 Unknown command"; the
+    Docker replica's own ftp-provider container now runs ProFTPD
+    instead) rather than parsing legacy ``LIST`` output, avoiding a
+    whole class of format-parsing bugs plain-text directory listings are
+    prone to.
+  * ``open_entry`` downloads to a throwaway local temp file (removed the
+    moment the caller closes it, via
+    ``transport._local_download.TempFileHandle``) rather than streaming
+    the raw FTP data-connection socket directly. A raw socket was tried
+    first, but CKAN's own resource uploader seeks on the handle it's
+    given (to measure the file size before copying) -- a socket
+    fundamentally can't support that, confirmed by a real CI failure.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import ftplib
+import os
 import ssl
+import tempfile
 import time
 from typing import BinaryIO, Callable, Optional
 
 from ckanext.providerharvest.audit import OutboundRequestEvent
 from ckanext.providerharvest.logic.validators import assert_safe_network_target
 from ckanext.providerharvest.secrets.base import SecretBundle
+from ckanext.providerharvest.transport._local_download import TempFileHandle
 from ckanext.providerharvest.transport.base import Entry, Page, Transport
 
 DEFAULT_PORT = 21
@@ -50,41 +61,6 @@ class PlainFtpNotAcknowledgedError(Exception):
     """``use_tls=False`` was requested but this source was never
     registered with the explicit plain-FTP acknowledgment -- see the
     module docstring. Refuses rather than silently connecting insecurely."""
-
-
-class _FTPStreamHandle:
-    """A real streamed read over the FTP data connection -- no temp file,
-    no full in-memory read (unlike ScpTransport, which has no equivalent
-    of this and has to fall back to a temp file for SCP's whole-file
-    protocol). ``close()`` finalizes the transfer on the control
-    connection so the client is left in a clean state for the next
-    command."""
-
-    def __init__(self, client: "ftplib.FTP", sock):
-        self._client = client
-        self._sock = sock
-        self._fh = sock.makefile("rb")
-
-    def read(self, size: int = -1) -> bytes:
-        return self._fh.read(size)
-
-    def close(self) -> None:
-        try:
-            self._fh.close()
-        finally:
-            try:
-                self._sock.close()
-            finally:
-                try:
-                    self._client.voidresp()
-                except Exception:  # noqa: BLE001 -- best-effort cleanup only
-                    pass
-
-    def __enter__(self) -> "_FTPStreamHandle":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
 
 
 class FTPTransport(Transport):
@@ -234,12 +210,20 @@ class FTPTransport(Transport):
         assert self._client is not None, "connect() must be called before opening a file"
         started = time.monotonic()
         error = None
+        fd, local_path = tempfile.mkstemp(prefix="providerharvest-ftp-")
+        os.close(fd)
         try:
-            self._client.voidcmd("TYPE I")  # binary mode -- never text/ASCII translation
-            sock = self._client.transfercmd("RETR " + entry.ref)
-            return _FTPStreamHandle(self._client, sock)
+            with open(local_path, "wb") as fh:
+                # retrbinary handles TYPE I (binary mode) and finalizing
+                # the transfer/control-connection response itself.
+                self._client.retrbinary("RETR " + entry.ref, fh.write)
+            return TempFileHandle(local_path)
         except Exception as exc:  # noqa: BLE001
             error = str(exc)
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
             raise
         finally:
             self._report(

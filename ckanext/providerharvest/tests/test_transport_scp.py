@@ -227,6 +227,28 @@ def test_open_entry_downloads_to_a_temp_file_and_cleans_up_on_close():
     assert holder["client"].closed is True
 
 
+def test_open_entry_handle_is_seekable():
+    # CKAN's own resource uploader seeks to measure the file size before
+    # copying it -- confirmed by a real CI failure the first version of
+    # this handle didn't support seek() at all.
+    from ckanext.providerharvest.transport.base import Entry
+
+    scp_factory, _ = _scp_client_factory(
+        fetched={"/exports/data-2024.csv": b"id,name\n1,Alpha\n"}
+    )
+    transport, _ = _transport(scp_client_factory=scp_factory)
+    with transport:
+        handle = transport.open_entry(Entry(ref="/exports/data-2024.csv", metadata={}))
+        try:
+            handle.seek(0, 2)  # SEEK_END
+            size = handle.tell()
+            handle.seek(0)
+            assert size == len(b"id,name\n1,Alpha\n")
+            assert handle.read() == b"id,name\n1,Alpha\n"
+        finally:
+            handle.close()
+
+
 def test_on_request_reports_connect_and_list_events():
     events = []
     transport, _ = _transport(
