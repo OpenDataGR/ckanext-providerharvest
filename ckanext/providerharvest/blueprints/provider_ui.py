@@ -15,6 +15,8 @@ changing the submitted field shape.
 
 from __future__ import annotations
 
+import json
+
 import flask
 
 from ckan.plugins import toolkit
@@ -83,6 +85,33 @@ def _auth_payload(form) -> dict:
     }
 
 
+def _sftp_payload(form) -> dict:
+    """Everything specific to transport_type=sftp: credentials (password
+    or private key -- whichever was filled in, matching SecretBundle's
+    own either/or shape), and the host-key fingerprint the provider must
+    have already fetched/confirmed via fetch_host_key (see that view).
+    """
+    credential_fields = {"username": form.get("sftp_username", "").strip()}
+    private_key_pem = form.get("sftp_private_key", "").strip()
+    if private_key_pem:
+        credential_fields["private_key_pem"] = private_key_pem
+        passphrase = form.get("sftp_private_key_passphrase", "").strip()
+        if passphrase:
+            credential_fields["private_key_passphrase"] = passphrase
+    else:
+        credential_fields["password"] = form.get("sftp_password", "").strip()
+
+    return {
+        "auth_type": "ssh_credentials",  # inert for sftp -- see base_generic._build_transport
+        "delivery_mode": "bulk_file",
+        "credential_fields": credential_fields,
+        "port": form.get("sftp_port", "").strip(),
+        "remote_path": form.get("sftp_remote_path", "").strip() or "/",
+        "glob_pattern": form.get("sftp_glob_pattern", "").strip() or "*",
+        "host_key_fingerprint": form.get("host_key_fingerprint", "").strip(),
+    }
+
+
 def _form_template_vars(data, errors=None) -> dict:
     return {
         "orgs": _orgs_for_current_user(),
@@ -95,6 +124,13 @@ def _form_template_vars(data, errors=None) -> dict:
     }
 
 
+def _transport_type(source: dict) -> str:
+    try:
+        return json.loads(source.get("config") or "{}").get("transport_type", "?")
+    except ValueError:
+        return "?"
+
+
 def source_list():
     if not toolkit.g.user:
         return toolkit.redirect_to("user.login")
@@ -103,8 +139,32 @@ def source_list():
     except toolkit.NotAuthorized:
         return toolkit.abort(403)
     return toolkit.render(
-        "providerharvest/source_list.html", extra_vars={"sources": sources}
+        "providerharvest/source_list.html",
+        extra_vars={"sources": [(s, _transport_type(s)) for s in sources]},
     )
+
+
+def _payload_from_form(form) -> dict:
+    payload = {
+        "name": form.get("name", "").strip(),
+        "title": form.get("title", "").strip(),
+        "owner_org": form.get("owner_org", "").strip(),
+        "endpoint_url": form.get("endpoint_url", "").strip(),
+        "transport_type": form.get("transport_type") or "http",
+        "frequency": form.get("frequency") or "DAILY",
+        "dataset_defaults": {
+            "title_translated": {"en": form.get("dataset_title", "").strip()},
+            "notes_translated": {"en": form.get("dataset_notes", "").strip()},
+        },
+        "notification_email": form.get("notification_email", "").strip(),
+    }
+    if payload["transport_type"] == "sftp":
+        payload.update(_sftp_payload(form))
+    else:
+        payload["auth_type"] = "api_key"
+        payload["row_rules"] = _row_rules_from_form(form)
+        payload.update(_auth_payload(form))
+    return payload
 
 
 def new_source():
@@ -117,22 +177,7 @@ def new_source():
         )
 
     form = flask.request.form
-    payload = {
-        "name": form.get("name", "").strip(),
-        "title": form.get("title", "").strip(),
-        "owner_org": form.get("owner_org", "").strip(),
-        "endpoint_url": form.get("endpoint_url", "").strip(),
-        "transport_type": "http",
-        "auth_type": "api_key",
-        "frequency": form.get("frequency") or "DAILY",
-        "dataset_defaults": {
-            "title_translated": {"en": form.get("dataset_title", "").strip()},
-            "notes_translated": {"en": form.get("dataset_notes", "").strip()},
-        },
-        "notification_email": form.get("notification_email", "").strip(),
-        "row_rules": _row_rules_from_form(form),
-        **_auth_payload(form),
-    }
+    payload = _payload_from_form(form)
     try:
         result = toolkit.get_action("provider_source_create")(_context(), payload)
     except toolkit.NotAuthorized:
@@ -156,13 +201,7 @@ def test_connection():
         return toolkit.redirect_to("user.login")
 
     form = flask.request.form
-    payload = {
-        "owner_org": form.get("owner_org", "").strip(),
-        "endpoint_url": form.get("endpoint_url", "").strip(),
-        "transport_type": "http",
-        "row_rules": _row_rules_from_form(form),
-        **_auth_payload(form),
-    }
+    payload = _payload_from_form(form)
     result = None
     error = None
     try:
@@ -176,6 +215,47 @@ def test_connection():
     template_vars.update({"result": result, "error": error})
     return toolkit.render(
         "providerharvest/test_connection_result.html", extra_vars=template_vars
+    )
+
+
+def fetch_host_key():
+    """The trust-on-first-use step SFTP registration requires: reads the
+    server's current SSH host-key fingerprint and re-renders the same
+    form (all other fields preserved) with it filled into
+    host_key_fingerprint, for the provider to visually confirm against
+    what the server operator gave them out-of-band before it gets pinned
+    by the actual "Register source" submit -- see
+    provider_source_fetch_host_key's own docstring for why this can't be
+    skipped or defaulted."""
+    if not toolkit.g.user:
+        return toolkit.redirect_to("user.login")
+
+    form = flask.request.form
+    payload = {
+        "owner_org": form.get("owner_org", "").strip(),
+        "endpoint_url": form.get("endpoint_url", "").strip(),
+        "port": form.get("sftp_port", "").strip(),
+    }
+    try:
+        result = toolkit.get_action("provider_source_fetch_host_key")(_context(), payload)
+    except toolkit.NotAuthorized:
+        return toolkit.abort(403)
+    except Exception as exc:  # noqa: BLE001 -- shown to the provider verbatim, this IS the diagnostic
+        toolkit.h.flash_error(toolkit._("Could not fetch the host key: %s") % exc)
+        return toolkit.render(
+            "providerharvest/source_form.html", extra_vars=_form_template_vars(form)
+        )
+
+    toolkit.h.flash_success(
+        toolkit._(
+            'Host key fingerprint for %(host)s: %(fingerprint)s -- confirm this matches '
+            'what the provider gave you out-of-band, then register the source.'
+        ) % result
+    )
+    data = form.to_dict()
+    data["host_key_fingerprint"] = result["fingerprint"]
+    return toolkit.render(
+        "providerharvest/source_form.html", extra_vars=_form_template_vars(data)
     )
 
 
@@ -206,6 +286,9 @@ providerharvest.add_url_rule("/sources", view_func=source_list, methods=["GET"])
 providerharvest.add_url_rule("/sources/new", view_func=new_source, methods=["GET", "POST"])
 providerharvest.add_url_rule(
     "/sources/test-connection", view_func=test_connection, methods=["POST"]
+)
+providerharvest.add_url_rule(
+    "/sources/fetch-host-key", view_func=fetch_host_key, methods=["POST"]
 )
 providerharvest.add_url_rule("/admin/pending", view_func=admin_pending, methods=["GET"])
 providerharvest.add_url_rule(

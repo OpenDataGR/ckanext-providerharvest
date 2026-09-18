@@ -19,6 +19,18 @@ _REQUIRED_PLUGINS = (
 )
 
 
+@pytest.fixture
+def _allow_private_network(monkeypatch):
+    # Same reasoning as test_e2e_sftp_harvest.py: sftp-provider's
+    # compose-network address is exactly what the real SSRF-class
+    # validator exists to reject for a real registration.
+    import ckanext.providerharvest.transport.sftp as transport_mod
+    monkeypatch.setattr(
+        transport_mod, "assert_safe_network_target",
+        lambda host, port, allow_private_ranges=False: [host],
+    )
+
+
 @pytest.mark.ckan_config("ckan.plugins", _REQUIRED_PLUGINS)
 @pytest.mark.usefixtures("with_plugins")
 class TestProviderUIBlueprint:
@@ -119,3 +131,72 @@ class TestProviderUIBlueprint:
 
         provider_source = provider_source_model.get_by_harvest_source_id(pkg.id)
         assert provider_source.status == "active"
+
+    def test_sftp_register_via_web_form_with_host_key_fetch(self, app, _allow_private_network):
+        """The SFTP half of the self-service form: fetch-host-key first
+        (the trust-on-first-use step -- provider_source_create refuses a
+        transport_type=sftp source without a pinned fingerprint), then
+        register with it filled in, against the real sftp-provider
+        container -- not a fake, exercising the actual template/route
+        wiring added alongside SFTPTransport."""
+        org = factories.Organization()
+        editor = factories.User()
+        helpers.call_action(
+            "organization_member_create",
+            {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        editor_environ = {"REMOTE_USER": editor["name"]}
+        base_fields = {
+            "owner_org": org["id"],
+            "endpoint_url": "sftp://sftp-provider",
+            "sftp_port": "22",
+        }
+
+        fetch_resp = app.post(
+            "/provider-harvest/sources/fetch-host-key",
+            extra_environ=editor_environ,
+            data=base_fields,
+            follow_redirects=False,
+        )
+        assert fetch_resp.status_code == 200
+        body = fetch_resp.get_data(as_text=True)
+        assert "SHA256:" in body, "host key fingerprint was not filled into the re-rendered form"
+
+        import re
+        fingerprint = re.search(r"value=\"(SHA256:[^\"]+)\"", body).group(1)
+
+        resp = app.post(
+            "/provider-harvest/sources/new",
+            extra_environ=editor_environ,
+            data={
+                "name": "ui-sftp-test-source",
+                "title": "UI SFTP Test Source",
+                "owner_org": org["id"],
+                "transport_type": "sftp",
+                "endpoint_url": "sftp://sftp-provider",
+                "sftp_port": "22",
+                "sftp_remote_path": "/upload",
+                "sftp_glob_pattern": "*.csv",
+                "sftp_username": "produser",
+                "sftp_password": "test-pass",
+                "host_key_fingerprint": fingerprint,
+                "dataset_title": "UI SFTP Test Dataset",
+                "dataset_notes": "Created by the blueprint SFTP smoke test.",
+                "frequency": "MANUAL",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 200), resp.get_data(as_text=True)
+
+        from ckanext.providerharvest.model import provider_source as provider_source_model
+        from ckan.model import Package, Session
+        pkg = Session.query(Package).filter_by(name="ui-sftp-test-source", type="harvest").first()
+        assert pkg is not None, "provider_source_create was never actually called"
+        provider_source = provider_source_model.get_by_harvest_source_id(pkg.id)
+        assert provider_source is not None
+        assert provider_source.status == "pending"
+        assert provider_source.host_key_fingerprint == fingerprint
+
+        list_resp = app.get("/provider-harvest/sources", extra_environ=editor_environ)
+        assert "sftp" in list_resp.get_data(as_text=True)

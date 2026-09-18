@@ -41,86 +41,149 @@
             {% endif %}
           </div>
           <div class="form-group">
-            <label for="field-endpoint_url">{{ _("Endpoint URL") }}</label>
-            <input id="field-endpoint_url" name="endpoint_url" type="url" class="form-control" required value="{{ data.get('endpoint_url', '') }}" placeholder="https://provider.example.com/api/records">
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>{{ _("Authentication (API key)") }}</legend>
-          <div class="form-group">
-            <label for="field-api_key">{{ _("API key") }}</label>
-            <input id="field-api_key" name="api_key" type="password" class="form-control" autocomplete="new-password">
-            <span class="info-block">{{ _("Stored encrypted, never shown again. Leave blank only if this endpoint truly needs no key.") }}</span>
-          </div>
-          <div class="form-group">
-            <label for="field-api_key_location">{{ _("Send the key as") }}</label>
-            <select id="field-api_key_location" name="api_key_location" class="form-control">
-              <option value="header">{{ _("HTTP header") }}</option>
-              <option value="query">{{ _("Query parameter") }}</option>
+            <label for="field-transport_type">{{ _("Transport") }}</label>
+            <select id="field-transport_type" name="transport_type" class="form-control">
+              <option value="http" {{ "selected" if data.get('transport_type', 'http') == 'http' else "" }}>{{ _("HTTP API (per-record JSON, mapped into DataStore)") }}</option>
+              <option value="sftp" {{ "selected" if data.get('transport_type') == 'sftp' else "" }}>{{ _("SFTP (whole files, stored as CKAN resources)") }}</option>
             </select>
+            <span class="info-block">{{ _("Fill in only the matching section below -- HTTP API settings or SFTP settings.") }}</span>
           </div>
           <div class="form-group">
-            <label for="field-api_key_name">{{ _("Header / parameter name") }}</label>
-            <input id="field-api_key_name" name="api_key_name" type="text" class="form-control" value="{{ data.get('api_key_name', 'X-API-Key') }}">
+            <label for="field-endpoint_url">{{ _("Endpoint URL / SFTP host") }}</label>
+            <input id="field-endpoint_url" name="endpoint_url" type="text" class="form-control" required value="{{ data.get('endpoint_url', '') }}" placeholder="https://provider.example.com/api/records  --or--  sftp://provider.example.com">
           </div>
         </fieldset>
 
-        <fieldset>
-          <legend>{{ _("Pagination") }}</legend>
-          <div class="form-group">
-            <label for="field-pagination_style">{{ _("Style") }}</label>
-            <select id="field-pagination_style" name="pagination_style" class="form-control">
-              <option value="page_number">{{ _("Page number") }}</option>
-              <option value="cursor">{{ _("Cursor / next-link") }}</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="field-items_path">{{ _("Path to the records array in the response") }}</label>
-            <input id="field-items_path" name="items_path" type="text" class="form-control" value="{{ data.get('items_path', 'results') }}" placeholder="results">
-          </div>
-          <div class="form-group">
-            <label for="field-page_param">{{ _("Page parameter name") }}</label>
-            <input id="field-page_param" name="page_param" type="text" class="form-control" value="{{ data.get('page_param', 'page') }}">
-          </div>
-        </fieldset>
+        <details {{ "open" if data.get('transport_type', 'http') != 'sftp' else "" }}>
+          <summary><strong>{{ _("HTTP API settings") }}</strong></summary>
 
-        <fieldset>
-          <legend>{{ _("Field mapping") }}</legend>
-          <p class="info-block">{{ _("Map each provider field (a JSONPath into one record) to a DataStore column. Exactly one field must be marked as the primary key.") }}</p>
-          <table class="table">
-            <thead>
-              <tr>
-                <th>{{ _("DataStore column") }}</th>
-                <th>{{ _("Source path") }}</th>
-                <th>{{ _("Type") }}</th>
-                <th>{{ _("Transform") }}</th>
-                <th>{{ _("Primary key") }}</th>
-                <th>{{ _("Required") }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for i in row_rule_slots %}
+          <fieldset>
+            <legend>{{ _("Authentication (API key)") }}</legend>
+            <div class="form-group">
+              <label for="field-api_key">{{ _("API key") }}</label>
+              <input id="field-api_key" name="api_key" type="password" class="form-control" autocomplete="new-password">
+              <span class="info-block">{{ _("Stored encrypted, never shown again. Leave blank only if this endpoint truly needs no key.") }}</span>
+            </div>
+            <div class="form-group">
+              <label for="field-api_key_location">{{ _("Send the key as") }}</label>
+              <select id="field-api_key_location" name="api_key_location" class="form-control">
+                <option value="header">{{ _("HTTP header") }}</option>
+                <option value="query">{{ _("Query parameter") }}</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="field-api_key_name">{{ _("Header / parameter name") }}</label>
+              <input id="field-api_key_name" name="api_key_name" type="text" class="form-control" value="{{ data.get('api_key_name', 'X-API-Key') }}">
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>{{ _("Pagination") }}</legend>
+            <div class="form-group">
+              <label for="field-pagination_style">{{ _("Style") }}</label>
+              <select id="field-pagination_style" name="pagination_style" class="form-control">
+                <option value="page_number">{{ _("Page number") }}</option>
+                <option value="cursor">{{ _("Cursor / next-link") }}</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="field-items_path">{{ _("Path to the records array in the response") }}</label>
+              <input id="field-items_path" name="items_path" type="text" class="form-control" value="{{ data.get('items_path', 'results') }}" placeholder="results">
+            </div>
+            <div class="form-group">
+              <label for="field-page_param">{{ _("Page parameter name") }}</label>
+              <input id="field-page_param" name="page_param" type="text" class="form-control" value="{{ data.get('page_param', 'page') }}">
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>{{ _("Field mapping") }}</legend>
+            <p class="info-block">{{ _("Map each provider field (a JSONPath into one record) to a DataStore column. Exactly one field must be marked as the primary key.") }}</p>
+            <table class="table">
+              <thead>
                 <tr>
-                  <td><input name="row_rules-{{ i }}-ckan_field" type="text" class="form-control"></td>
-                  <td><input name="row_rules-{{ i }}-source_path" type="text" class="form-control" placeholder="e.g. id or data.id"></td>
-                  <td>
-                    <select name="row_rules-{{ i }}-field_type" class="form-control">
-                      {% for ft in field_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}
-                    </select>
-                  </td>
-                  <td>
-                    <select name="row_rules-{{ i }}-transform" class="form-control">
-                      {% for t in transforms %}<option value="{{ t }}">{{ t or _("none") }}</option>{% endfor %}
-                    </select>
-                  </td>
-                  <td><input name="row_rules-{{ i }}-is_primary_key" type="checkbox"></td>
-                  <td><input name="row_rules-{{ i }}-required" type="checkbox"></td>
+                  <th>{{ _("DataStore column") }}</th>
+                  <th>{{ _("Source path") }}</th>
+                  <th>{{ _("Type") }}</th>
+                  <th>{{ _("Transform") }}</th>
+                  <th>{{ _("Primary key") }}</th>
+                  <th>{{ _("Required") }}</th>
                 </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </fieldset>
+              </thead>
+              <tbody>
+                {% for i in row_rule_slots %}
+                  <tr>
+                    <td><input name="row_rules-{{ i }}-ckan_field" type="text" class="form-control"></td>
+                    <td><input name="row_rules-{{ i }}-source_path" type="text" class="form-control" placeholder="e.g. id or data.id"></td>
+                    <td>
+                      <select name="row_rules-{{ i }}-field_type" class="form-control">
+                        {% for ft in field_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}
+                      </select>
+                    </td>
+                    <td>
+                      <select name="row_rules-{{ i }}-transform" class="form-control">
+                        {% for t in transforms %}<option value="{{ t }}">{{ t or _("none") }}</option>{% endfor %}
+                      </select>
+                    </td>
+                    <td><input name="row_rules-{{ i }}-is_primary_key" type="checkbox"></td>
+                    <td><input name="row_rules-{{ i }}-required" type="checkbox"></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </fieldset>
+        </details>
+
+        <details {{ "open" if data.get('transport_type') == 'sftp' else "" }}>
+          <summary><strong>{{ _("SFTP settings") }}</strong></summary>
+
+          <fieldset>
+            <legend>{{ _("Connection") }}</legend>
+            <div class="form-group">
+              <label for="field-sftp_port">{{ _("Port") }}</label>
+              <input id="field-sftp_port" name="sftp_port" type="text" class="form-control" value="{{ data.get('sftp_port', '22') }}">
+            </div>
+            <div class="form-group">
+              <label for="field-sftp_remote_path">{{ _("Remote directory") }}</label>
+              <input id="field-sftp_remote_path" name="sftp_remote_path" type="text" class="form-control" value="{{ data.get('sftp_remote_path', '/') }}">
+            </div>
+            <div class="form-group">
+              <label for="field-sftp_glob_pattern">{{ _("Which files to pull (glob pattern)") }}</label>
+              <input id="field-sftp_glob_pattern" name="sftp_glob_pattern" type="text" class="form-control" value="{{ data.get('sftp_glob_pattern', '*') }}" placeholder="*.csv">
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>{{ _("Authentication (SSH)") }}</legend>
+            <div class="form-group">
+              <label for="field-sftp_username">{{ _("Username") }}</label>
+              <input id="field-sftp_username" name="sftp_username" type="text" class="form-control" value="{{ data.get('sftp_username', '') }}">
+            </div>
+            <div class="form-group">
+              <label for="field-sftp_password">{{ _("Password") }}</label>
+              <input id="field-sftp_password" name="sftp_password" type="password" class="form-control" autocomplete="new-password">
+              <span class="info-block">{{ _("Leave blank if using a private key instead. Stored encrypted, never shown again.") }}</span>
+            </div>
+            <div class="form-group">
+              <label for="field-sftp_private_key">{{ _("Private key (PEM, optional -- alternative to a password)") }}</label>
+              <textarea id="field-sftp_private_key" name="sftp_private_key" class="form-control" rows="4"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="field-sftp_private_key_passphrase">{{ _("Private key passphrase (if any)") }}</label>
+              <input id="field-sftp_private_key_passphrase" name="sftp_private_key_passphrase" type="password" class="form-control" autocomplete="new-password">
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>{{ _("Host key (trust on first use)") }}</legend>
+            <p class="info-block">{{ _("SSH has no certificate authority -- fetch the server's current host-key fingerprint below, confirm it matches what the provider gave you out-of-band (phone, ticket, signed email -- not this same form), then register. Every later run re-checks it and refuses to connect if it ever changes.") }}</p>
+            <div class="form-group">
+              <label for="field-host_key_fingerprint">{{ _("Confirmed fingerprint") }}</label>
+              <input id="field-host_key_fingerprint" name="host_key_fingerprint" type="text" class="form-control" value="{{ data.get('host_key_fingerprint', '') }}" placeholder="SHA256:...">
+            </div>
+            <button type="submit" formaction="{{ h.url_for('providerharvest.fetch_host_key') }}" formnovalidate class="btn btn-default">{{ _("Fetch host key") }}</button>
+          </fieldset>
+        </details>
 
         <fieldset>
           <legend>{{ _("Dataset metadata") }}</legend>

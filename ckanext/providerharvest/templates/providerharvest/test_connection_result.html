@@ -14,12 +14,18 @@
       {% else %}
         <div class="alert alert-success">{{ _("Connected successfully -- nothing was saved or written.") }}</div>
 
-        <h3>{{ _("Sample records (raw)") }}</h3>
-        <pre>{{ result.sample_records | tojson(indent=2) }}</pre>
+        {% if result.sample_files is not none %}
+          <h3>{{ _("Matching files on the server") }}</h3>
+          <p class="info-block">{{ _("Whole files only -- SFTP sources stream these as CKAN resources, there's no per-record content to preview.") }}</p>
+          <pre>{{ result.sample_files | tojson(indent=2) }}</pre>
+        {% else %}
+          <h3>{{ _("Sample records (raw)") }}</h3>
+          <pre>{{ result.sample_records | tojson(indent=2) }}</pre>
 
-        {% if result.preview_rows %}
-          <h3>{{ _("Mapped preview") }}</h3>
-          <pre>{{ result.preview_rows | tojson(indent=2) }}</pre>
+          {% if result.preview_rows %}
+            <h3>{{ _("Mapped preview") }}</h3>
+            <pre>{{ result.preview_rows | tojson(indent=2) }}</pre>
+          {% endif %}
         {% endif %}
       {% endif %}
 
