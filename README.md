@@ -1,40 +1,50 @@
 # ckanext-providerharvest
 
 A self-service CKAN extension letting data providers register their own
-private APIs (and, in a later phase, SFTP/SCP/FTP endpoints) so their data
-can be pulled into [data.gov.gr](https://data.gov.gr) on a schedule they
-control, stored via `ckanext-datastore`, and served to consumers through
-DataStore's own query API.
+private APIs, SFTP/SCP servers, or FTP/FTPS servers so their data can be
+pulled into [data.gov.gr](https://data.gov.gr) on a schedule they control,
+stored via `ckanext-datastore` (API sources) or as CKAN resources (file
+sources), and served to consumers through DataStore's own query API.
 
 See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
 
 ## Status
 
-**Phase 1 (MVP) in progress.** Implemented so far:
+**Phase 1 (MVP) and Phase 1.5 (file transports) complete.** Implemented so far:
 
 - `GenericProviderHarvester` -- one harvester class, config-driven (see
   `ckanext/providerharvest/harvesters/base_generic.py`).
 - `DirectHTTPSTransport` -- HTTP JSON APIs, paginated, `delivery_mode=api_records`
   (per-record field mapping into DataStore).
-- `SFTPTransport` and `ScpTransport` (Phase 1.5) -- both paramiko-based and
-  sharing the exact same connection/host-key/auth code
-  (`transport/ssh_common.py`): SSH host-key pinned at registration time via
-  `provider_source_fetch_host_key` (trust-on-first-use; every later
-  connection re-verifies the fingerprint and refuses to proceed on a
-  mismatch). `delivery_mode=bulk_file`: whole remote files (glob-filtered)
-  are streamed straight into CKAN resources via `loaders/file_resource_loader.py`,
-  with ckanext-xloader's existing automatic resource-create/update hook doing
-  the actual DataStore load -- no manual trigger needed. SFTP streams files
-  directly; SCP has no streamed-read equivalent (whole-file push/pull
-  protocol) so it downloads to a throwaway temp file first. SCP's own
-  `list_entries` has no native directory-listing call either, so it runs a
-  single fixed/parameterized `find` command over an exec channel instead
-  (path/glob shell-quoted and restricted to a safe character set). SCP's
-  self-service UI/registration form and Docker-replica verification are
-  still pending -- see "Not yet built" below. FTP is not yet built.
+- `SFTPTransport`, `ScpTransport`, and `FTPTransport` (Phase 1.5) --
+  `delivery_mode=bulk_file`: whole remote files (glob-filtered) are loaded
+  straight into CKAN resources via `loaders/file_resource_loader.py`, with
+  ckanext-xloader's existing automatic resource-create/update hook doing the
+  actual DataStore load -- no manual trigger needed.
+  - SFTP/SCP (`transport/sftp.py`, `transport/scp.py`) share the exact same
+    paramiko connection/auth code (`transport/ssh_common.py`) and SSH
+    host-key pinning: fetched via `provider_source_fetch_host_key` at
+    registration time (trust-on-first-use), re-verified on every later
+    connection, refuses on any mismatch. SFTP streams files directly (a
+    real random-access file handle); SCP has no equivalent (whole-file
+    push/pull protocol, and its `list_entries` has no native
+    directory-listing call either, so it runs a single
+    fixed/parameterized `find` command over an exec channel instead,
+    path/glob shell-quoted and restricted to a safe character set).
+  - FTP (`transport/ftp.py`) defaults to FTPS (explicit TLS, a real
+    verifying `ssl.create_default_context()` -- never disabled) with
+    the data channel secured too, not just login; plain FTP is refused
+    unless the source was registered with an explicit
+    `plain_ftp_acknowledged` opt-in. Lists via MLSD (RFC 3659).
+  - SCP and FTP both lack a true streamed-read primitive (unlike SFTP),
+    *and* CKAN's own resource uploader requires a seekable handle (it
+    measures file size by seeking) -- so both download to a throwaway
+    local temp file first (`transport/_local_download.py`), deleted the
+    moment the caller is done with it.
 - `ApiKeyAuth` -- the only HTTP auth strategy implemented so far (irrelevant
-  for SFTP/SCP, which authenticate from the secret's own shape -- username +
-  password or private key -- instead of the `AuthStrategy` interface).
+  for SFTP/SCP/FTP, which authenticate from the secret's own shape --
+  username + password or private key -- instead of the `AuthStrategy`
+  interface).
 - `EnvelopeSecretsBackend` -- AES-256-GCM envelope encryption for provider
   credentials, master key outside the CKAN database.
 - Network-target validator (`logic/validators.py`) -- the SSRF-class
@@ -43,29 +53,27 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
 - `DataStoreLoader` -- pushes mapped rows into `ckanext-datastore` via
   `datastore_create`/`datastore_upsert`.
 - Provider self-service actions (`logic/action.py`): `provider_source_create`,
-  `provider_source_test_connection`, `provider_source_activate` (the
-  admin approval gate), `provider_source_list_mine`, all org-scoped via
-  `logic/auth.py` rather than requiring CKAN sysadmin rights.
+  `provider_source_test_connection`, `provider_source_fetch_host_key`,
+  `provider_source_activate` (the admin approval gate),
+  `provider_source_list_mine`, all org-scoped via `logic/auth.py` rather
+  than requiring CKAN sysadmin rights.
 - Job-failure email notifications to the provider's registered contact
   after repeated consecutive failures (`notifications.py`).
 - Self-service web UI (`blueprints/provider_ui.py`, Phase 2): a
   form-driven flow at `/provider-harvest/sources` (list) and
   `/provider-harvest/sources/new` (register + test-connection preview),
   plus a sysadmin approval queue at `/provider-harvest/admin/pending`.
-  Covers both transport types: an HTTP API section and an SFTP section
-  (port/remote_path/glob, username + password-or-private-key auth, and a
-  "Fetch host key" step for the SSH trust-on-first-use confirmation
-  `provider_source_create` requires -- see `provider_source_fetch_host_key`).
-  Field-mapping rows are plain repeatable form fields for now, not a
-  dynamic JS editor -- see the blueprint's module docstring.
+  Covers all four transports: an HTTP API section, one shared "SFTP / SCP"
+  section (a subsystem sub-selector picks which, since they're identical
+  fields otherwise -- port/remote_path/glob, username + password-or-
+  private-key auth, and the "Fetch host key" trust-on-first-use step), and
+  an "FTP / FTPS" section (with the `use_tls`/plain-FTP-acknowledgment
+  checkboxes). Field-mapping rows are plain repeatable form fields for
+  now, not a dynamic JS editor -- see the blueprint's module docstring.
 
-**Not yet built:** `FTPTransport` (Phase 1.5 remainder), Basic/OAuth2/mTLS
-auth, and the broker/relay transport; `ScpTransport`'s self-service UI
-fields, source-list "Transport" recognition, and Docker-replica
-verification (backend + unit tests only so far -- not yet exercised
-against a real SCP-only server, deliberately deferred to land together
-with FTP's own verification pass); a real dynamic field-mapping editor and
-richer approval-workflow UI (Phase 2 follow-ons).
+**Not yet built:** Basic/OAuth2/mTLS auth, and the broker/relay transport
+(Phase 1.5 stretch items DESIGN.md marks as stub-only); a real dynamic
+field-mapping editor and richer approval-workflow UI (Phase 2 follow-ons).
 
 ## Development
 
@@ -179,14 +187,32 @@ gather/fetch/import pipeline against
 service, and the already-running `ckan-worker` queue consumers -- nothing
 in the extension itself is mocked.
 
-The SFTP/`bulk_file` half is likewise automated in
-[`test_e2e_sftp_harvest.py`](ckanext/providerharvest/tests/integration/test_e2e_sftp_harvest.py)
-against [`docker/sftp-provider/`](docker/sftp-provider/upload/), a real
-`atmoz/sftp` OpenSSH server seeded with a fixed set of files: registers
-via `provider_source_fetch_host_key` + `provider_source_create`
-(`transport_type=sftp`), activates, runs gather/import_stage, and
-confirms the glob-matched files land as CKAN resources. SCP/FTP still
-need those transports to exist first.
+The `bulk_file` half is likewise automated for all three file transports,
+each against a real test server (not a fake) seeded with a fixed set of
+files (`export-2024.csv`, `export-2023.csv`, and a `readme.txt` the
+`glob_pattern="*.csv"` filter must exclude): registers via
+`provider_source_fetch_host_key` (SFTP/SCP only) + `provider_source_create`,
+activates, runs gather/import_stage, and confirms the glob-matched files
+land as CKAN resources.
+
+- [`test_e2e_sftp_harvest.py`](ckanext/providerharvest/tests/integration/test_e2e_sftp_harvest.py)
+  against [`docker/sftp-provider/`](docker/sftp-provider/upload/) (`atmoz/sftp`,
+  an OpenSSH server locked to the SFTP subsystem).
+- [`test_e2e_scp_harvest.py`](ckanext/providerharvest/tests/integration/test_e2e_scp_harvest.py)
+  against [`docker/scp-provider/`](docker/scp-provider/), a plain OpenSSH server
+  built from scratch here -- `atmoz/sftp` specifically forces
+  `ForceCommand internal-sftp`, which blocks the raw `scp`/exec-channel
+  commands `ScpTransport` needs, so it can't be reused for this.
+- [`test_e2e_ftp_harvest.py`](ckanext/providerharvest/tests/integration/test_e2e_ftp_harvest.py)
+  against [`docker/ftp-provider/`](docker/ftp-provider/) (ProFTPD, plain FTP
+  only -- FTPS isn't exercised here since a self-signed cert would
+  correctly fail `FTPTransport`'s real, verifying TLS context; that path
+  is covered directly by `test_transport_ftp.py`'s fakes instead).
+
+The self-service web UI is exercised the same way, through the real
+`/provider-harvest/*` routes rather than the actions directly, in
+[`test_blueprint.py`](ckanext/providerharvest/tests/integration/test_blueprint.py)
+(including the SFTP/SCP subsystem sub-selector and the FTP form fields).
 
 **CI**: none of this project's own dev machines have Docker available,
 so the boot-and-verify steps above (build, bring up, confirm plugins +
