@@ -85,11 +85,14 @@ def _auth_payload(form) -> dict:
     }
 
 
-def _sftp_payload(form) -> dict:
-    """Everything specific to transport_type=sftp: credentials (password
-    or private key -- whichever was filled in, matching SecretBundle's
-    own either/or shape), and the host-key fingerprint the provider must
-    have already fetched/confirmed via fetch_host_key (see that view).
+def _ssh_payload(form) -> dict:
+    """Everything specific to transport_type=sftp|scp -- both share this
+    one fieldset in the form (a "SSH subsystem" choice picks which),
+    since SFTPTransport/ScpTransport share the exact same connection/
+    host-key/auth code: credentials (password or private key --
+    whichever was filled in, matching SecretBundle's own either/or
+    shape), and the host-key fingerprint the provider must have already
+    fetched/confirmed via fetch_host_key (see that view).
     """
     credential_fields = {"username": form.get("sftp_username", "").strip()}
     private_key_pem = form.get("sftp_private_key", "").strip()
@@ -102,13 +105,33 @@ def _sftp_payload(form) -> dict:
         credential_fields["password"] = form.get("sftp_password", "").strip()
 
     return {
-        "auth_type": "ssh_credentials",  # inert for sftp -- see base_generic._build_transport
+        "auth_type": "ssh_credentials",  # inert for sftp/scp -- see base_generic._build_transport
         "delivery_mode": "bulk_file",
         "credential_fields": credential_fields,
         "port": form.get("sftp_port", "").strip(),
         "remote_path": form.get("sftp_remote_path", "").strip() or "/",
         "glob_pattern": form.get("sftp_glob_pattern", "").strip() or "*",
         "host_key_fingerprint": form.get("host_key_fingerprint", "").strip(),
+    }
+
+
+def _ftp_payload(form) -> dict:
+    """Everything specific to transport_type=ftp: credentials (username +
+    password only -- FTP has no private-key auth concept), and the
+    use_tls/plain_ftp_acknowledged pair _require_ftp_fields cross-
+    validates (FTPS is the default; plain FTP needs the checkbox)."""
+    return {
+        "auth_type": "ftp_credentials",  # inert for ftp -- see base_generic._build_transport
+        "delivery_mode": "bulk_file",
+        "credential_fields": {
+            "username": form.get("ftp_username", "").strip(),
+            "password": form.get("ftp_password", "").strip(),
+        },
+        "port": form.get("ftp_port", "").strip(),
+        "remote_path": form.get("ftp_remote_path", "").strip() or "/",
+        "glob_pattern": form.get("ftp_glob_pattern", "").strip() or "*",
+        "use_tls": "true" if form.get("ftp_use_tls") == "on" else "false",
+        "plain_ftp_acknowledged": "true" if form.get("ftp_plain_ftp_acknowledged") == "on" else "false",
     }
 
 
@@ -144,13 +167,27 @@ def source_list():
     )
 
 
+def _resolve_transport_type(form) -> str:
+    """The form's top-level selector offers "http"/"ssh"/"ftp" -- "ssh"
+    isn't a real transport_type the backend understands, it's a UI-only
+    grouping so SFTP and SCP (which share every field except which SSH
+    subsystem to use) don't need two near-duplicate fieldsets. A second
+    selector inside the SSH section (ssh_subsystem) picks the real
+    sftp/scp value."""
+    choice = form.get("transport_type") or "http"
+    if choice == "ssh":
+        return form.get("ssh_subsystem") or "sftp"
+    return choice
+
+
 def _payload_from_form(form) -> dict:
+    transport_type = _resolve_transport_type(form)
     payload = {
         "name": form.get("name", "").strip(),
         "title": form.get("title", "").strip(),
         "owner_org": form.get("owner_org", "").strip(),
         "endpoint_url": form.get("endpoint_url", "").strip(),
-        "transport_type": form.get("transport_type") or "http",
+        "transport_type": transport_type,
         "frequency": form.get("frequency") or "DAILY",
         "dataset_defaults": {
             "title_translated": {"en": form.get("dataset_title", "").strip()},
@@ -158,8 +195,10 @@ def _payload_from_form(form) -> dict:
         },
         "notification_email": form.get("notification_email", "").strip(),
     }
-    if payload["transport_type"] == "sftp":
-        payload.update(_sftp_payload(form))
+    if transport_type in ("sftp", "scp"):
+        payload.update(_ssh_payload(form))
+    elif transport_type == "ftp":
+        payload.update(_ftp_payload(form))
     else:
         payload["auth_type"] = "api_key"
         payload["row_rules"] = _row_rules_from_form(form)

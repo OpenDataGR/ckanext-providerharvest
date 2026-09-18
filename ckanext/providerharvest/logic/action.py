@@ -58,10 +58,11 @@ def _pop_nested_fields(data_dict: dict) -> dict:
 
 
 def _parse_host(endpoint_url: str) -> str:
-    """SFTP sources reuse ``endpoint_url`` for the host (no separate
-    "host" field) -- accepts either a bare hostname or a URL-ish
-    ``sftp://host[:port]`` string, matching what a provider would
-    plausibly type into the same field the HTTP flow uses for its URL."""
+    """SFTP/SCP/FTP sources reuse ``endpoint_url`` for the host (no
+    separate "host" field) -- accepts either a bare hostname or a
+    URL-ish ``sftp://host[:port]``/``ftp://host[:port]`` string,
+    matching what a provider would plausibly type into the same field
+    the HTTP flow uses for its URL."""
     from urllib.parse import urlparse
     if "://" in endpoint_url:
         return urlparse(endpoint_url).hostname or endpoint_url
@@ -84,6 +85,36 @@ def _require_ssh_fields(data_dict: dict) -> None:
         ]
     if errors:
         raise toolkit.ValidationError(errors)
+
+
+def _parse_bool(value, default: bool) -> bool:
+    """Form fields arrive as strings ("true"/"on"/...), direct Action API
+    calls may pass real booleans -- accept either, same tolerance the
+    checkbox-style row_rules fields already need in the blueprint."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "on", "yes")
+
+
+def _require_ftp_fields(data_dict: dict) -> bool:
+    """Returns the resolved use_tls value; raises if plain (unencrypted)
+    FTP was requested without the explicit acknowledgment DESIGN.md's
+    Phase 1.5 notes require -- see transport/ftp.py's own docstring for
+    why this can't be silently defaulted."""
+    if data_dict.get("transport_type") != "ftp":
+        return True
+    use_tls = _parse_bool(data_dict.get("use_tls"), default=True)
+    if not use_tls and not _parse_bool(data_dict.get("plain_ftp_acknowledged"), default=False):
+        raise toolkit.ValidationError({
+            "plain_ftp_acknowledged": [
+                "Required when use_tls is disabled -- plain FTP sends credentials and "
+                "file contents unencrypted. Acknowledge this explicitly, or leave "
+                "use_tls enabled (the default) to use FTPS instead."
+            ]
+        })
+    return use_tls
 
 
 @toolkit.side_effect_free
@@ -130,9 +161,11 @@ def provider_source_test_connection(context, data_dict):
     transport_type = data_dict.get("transport_type")
     if transport_type in SSH_TRANSPORT_TYPES:
         return _test_ssh_connection(data_dict, transport_type)
+    if transport_type == "ftp":
+        return _test_ftp_connection(data_dict)
     if transport_type != "http":
         raise toolkit.ValidationError(
-            "transport_type %r is not yet implemented (available: http, %s)"
+            "transport_type %r is not yet implemented (available: http, %s, ftp)"
             % (transport_type, ", ".join(SSH_TRANSPORT_TYPES))
         )
 
@@ -198,6 +231,36 @@ def _test_ssh_connection(data_dict, transport_type):
     return {"sample_files": sample_files}
 
 
+def _test_ftp_connection(data_dict):
+    """Same shape as _test_ssh_connection, but FTP has no host-key
+    pinning step -- FTPS uses ordinary TLS certificate verification
+    instead (see transport/ftp.py), so there's nothing to pre-confirm
+    before this dry run beyond the plain-FTP acknowledgment check
+    _require_ftp_fields already enforces."""
+    from ckanext.providerharvest.secrets.base import SecretBundle
+    from ckanext.providerharvest.transport.ftp import FTPTransport
+
+    use_tls = _require_ftp_fields(data_dict)
+    secret = SecretBundle(fields=data_dict["credential_fields"])  # not yet persisted
+    transport = FTPTransport(
+        _parse_host(data_dict["endpoint_url"]),
+        secret=secret,
+        port=int(data_dict.get("port") or 21),
+        remote_path=data_dict.get("remote_path") or "/",
+        glob_pattern=data_dict.get("glob_pattern") or "*",
+        use_tls=use_tls,
+        plain_ftp_acknowledged=_parse_bool(data_dict.get("plain_ftp_acknowledged"), default=False),
+    )
+    with transport:
+        page = transport.list_entries(cursor=None)
+
+    sample_files = [
+        {"ref": entry.ref, "mtime": entry.metadata.get("modify"), "size": entry.metadata.get("size")}
+        for entry in page.entries[:20]
+    ]
+    return {"sample_files": sample_files}
+
+
 def provider_source_fetch_host_key(context, data_dict):
     """Connects just far enough to read the SSH server's host key and
     returns its fingerprint for the provider to confirm, WITHOUT
@@ -243,6 +306,7 @@ def provider_source_create(context, data_dict):
         raise toolkit.ValidationError(errors)
     data_dict.update(nested)
     _require_ssh_fields(data_dict)
+    ftp_use_tls = _require_ftp_fields(data_dict)
 
     owner_org = data_dict["owner_org"]
     # The secret's harvest_source_id column is bookkeeping/audit metadata
@@ -268,6 +332,14 @@ def provider_source_create(context, data_dict):
             "port": int(data_dict.get("port") or 22),
             "remote_path": data_dict.get("remote_path") or "/",
             "glob_pattern": data_dict.get("glob_pattern") or "*",
+        })
+    elif data_dict["transport_type"] == "ftp":
+        config.update({
+            "host": _parse_host(data_dict["endpoint_url"]),
+            "port": int(data_dict.get("port") or 21),
+            "remote_path": data_dict.get("remote_path") or "/",
+            "glob_pattern": data_dict.get("glob_pattern") or "*",
+            "use_tls": ftp_use_tls,
         })
 
     harvest_source = toolkit.get_action("harvest_source_create")(dict(context), {
@@ -295,6 +367,9 @@ def provider_source_create(context, data_dict):
         notification_email=data_dict.get("notification_email"),
         notification_webhook_url=data_dict.get("notification_webhook_url"),
         host_key_fingerprint=data_dict.get("host_key_fingerprint"),
+        plain_ftp_acknowledged=(
+            not ftp_use_tls if data_dict["transport_type"] == "ftp" else False
+        ),
         created=datetime.datetime.utcnow(),
     )
 

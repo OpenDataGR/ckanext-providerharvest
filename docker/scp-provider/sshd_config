@@ -1,0 +1,11 @@
+# Minimal sshd config for the throwaway SCP test server -- see this
+# directory's Dockerfile for why atmoz/sftp (used for the SFTP test
+# server) can't be reused here: no ForceCommand, so plain `scp`/exec
+# commands (what ScpTransport actually needs) work normally.
+Port 22
+PermitRootLogin no
+PasswordAuthentication yes
+PubkeyAuthentication no
+ChallengeResponseAuthentication no
+UsePAM no
+Subsystem sftp /usr/lib/ssh/sftp-server

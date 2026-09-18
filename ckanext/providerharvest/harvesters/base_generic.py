@@ -3,10 +3,10 @@
 Behaviour is entirely driven by ``HarvestSource.config`` (transport_type,
 auth_type, secret_ref, pagination, delivery_mode) plus the
 ``ProviderSourceExtension``/``FieldMappingProfile`` side-tables -- there is
-no per-provider subclass. Phase 1 implements exactly one transport
-("http") and one auth strategy ("api_key"); other values raise a clear
-"not yet implemented" error rather than failing silently, so adding
-SFTP/SCP/FTP later is additive.
+no per-provider subclass. Supported transports: "http" (api_records),
+"sftp"/"scp"/"ftp" (bulk_file). Unsupported transport_type/delivery_mode
+combinations raise a clear "not yet implemented" error rather than
+failing silently.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from ckanext.providerharvest.secrets.envelope import EnvelopeSecretsBackend
 from ckanext.providerharvest.model.secret import SqlAlchemySecretRepository
 from ckanext.providerharvest.transport.base import Entry, Transport
 from ckanext.providerharvest.transport.direct_https import DirectHTTPSTransport
+from ckanext.providerharvest.transport.ftp import FTPTransport
 from ckanext.providerharvest.transport.scp import ScpTransport
 from ckanext.providerharvest.transport.sftp import SFTPTransport
 
@@ -52,6 +53,12 @@ _AUTH_STRATEGIES: dict[str, type[AuthStrategy]] = {
 #: the file-listing/reading mechanics differ between them. See
 #: DESIGN.md's Phase 1.5 notes.
 SSH_TRANSPORT_TYPES = ("sftp", "scp")
+
+#: Every whole-file transport (delivery_mode=bulk_file): the SSH ones
+#: plus FTP/FTPS, which needs the same host/remote_path config shape but
+#: isn't SSH-based (no host-key pinning -- FTPS uses ordinary TLS
+#: certificate verification instead, see transport/ftp.py).
+BULK_FILE_TRANSPORT_TYPES = SSH_TRANSPORT_TYPES + ("ftp",)
 
 
 def default_secrets_backend() -> SecretsBackend:
@@ -96,7 +103,7 @@ class GenericProviderHarvester(HarvesterBase):
         transport_type = data.get("transport_type")
         if transport_type == "http":
             required.append("pagination")
-        elif transport_type in SSH_TRANSPORT_TYPES:
+        elif transport_type in BULK_FILE_TRANSPORT_TYPES:
             # NOT host_key_fingerprint: that's per-source trust state,
             # stored on ProviderSourceExtension.host_key_fingerprint (see
             # provider_source_create) and read from there by
@@ -104,7 +111,8 @@ class GenericProviderHarvester(HarvesterBase):
             # config blob at all, so requiring it here would reject
             # every real SFTP/SCP source at creation time (confirmed:
             # this broke the SFTP integration test's very first
-            # harvest_source_create call).
+            # harvest_source_create call). Not applicable to ftp anyway,
+            # which has no host-key concept at all.
             required += ["host", "remote_path"]
         missing = [key for key in required if key not in data]
         if missing:
@@ -119,7 +127,7 @@ class GenericProviderHarvester(HarvesterBase):
                 "store them via the secrets backend and reference by secret_ref" % sorted(leaked)
             )
 
-        supported_transports = ("http",) + SSH_TRANSPORT_TYPES
+        supported_transports = ("http",) + BULK_FILE_TRANSPORT_TYPES
         if transport_type not in supported_transports:
             raise toolkit.ValidationError(
                 "transport_type %r is not yet implemented (available: %s)"
@@ -129,10 +137,13 @@ class GenericProviderHarvester(HarvesterBase):
         delivery_mode = data.get("delivery_mode", "api_records")
         # Each transport currently only supports the one delivery_mode
         # that actually makes sense for it: an HTTP JSON API yields
-        # per-record data to map into DataStore, an SFTP/SCP directory
-        # yields whole files to store as resources -- see DESIGN.md's
-        # Phase 1.5 notes on why these aren't cross-combined (yet).
-        valid_combinations = {"http": "api_records", "sftp": "bulk_file", "scp": "bulk_file"}
+        # per-record data to map into DataStore, an SFTP/SCP/FTP
+        # directory yields whole files to store as resources -- see
+        # DESIGN.md's Phase 1.5 notes on why these aren't cross-combined
+        # (yet).
+        valid_combinations = {
+            "http": "api_records", "sftp": "bulk_file", "scp": "bulk_file", "ftp": "bulk_file",
+        }
         if delivery_mode != valid_combinations[transport_type]:
             raise toolkit.ValidationError(
                 "delivery_mode %r is not supported for transport_type=%r "
@@ -186,6 +197,27 @@ class GenericProviderHarvester(HarvesterBase):
                 # Shared between sftp/scp: same SSH server, same key.
                 pinned_host_key_fingerprint=(
                     provider_source.host_key_fingerprint if provider_source else None
+                ),
+                allow_private_ranges=config.get("allow_private_ranges", False),
+                on_request=on_request,
+                harvest_source_id=source.id,
+                harvest_job_id=job.id,
+            )
+        if config["transport_type"] == "ftp":
+            provider_source = provider_source_model.get_by_harvest_source_id(source.id)
+            return FTPTransport(
+                config["host"],
+                secret=secret,
+                port=config.get("port", 21),
+                remote_path=config["remote_path"],
+                glob_pattern=config.get("glob_pattern", "*"),
+                use_tls=config.get("use_tls", True),
+                # Per-source risk acceptance, stored on
+                # ProviderSourceExtension (like host_key_fingerprint) --
+                # not config, so it can't be silently defaulted to True
+                # by editing HarvestSource.config directly.
+                plain_ftp_acknowledged=(
+                    bool(provider_source.plain_ftp_acknowledged) if provider_source else False
                 ),
                 allow_private_ranges=config.get("allow_private_ranges", False),
                 on_request=on_request,

@@ -202,3 +202,137 @@ class TestProviderUIBlueprint:
 
         list_resp = app.get("/provider-harvest/sources", extra_environ=editor_environ)
         assert "sftp" in list_resp.get_data(as_text=True)
+
+    def test_scp_register_via_web_form_through_the_ssh_subsystem_selector(
+        self, app, _allow_private_network
+    ):
+        """Unlike the SFTP test above (which posts transport_type=sftp
+        directly), this one goes through the real top-level selector
+        value ("ssh") plus the SSH-subsystem sub-selector ("scp") the
+        template actually renders -- see
+        provider_ui._resolve_transport_type -- against the real
+        scp-provider container (not atmoz/sftp; see
+        docker/scp-provider/Dockerfile for why)."""
+        org = factories.Organization()
+        editor = factories.User()
+        helpers.call_action(
+            "organization_member_create",
+            {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        editor_environ = {"REMOTE_USER": editor["name"]}
+        base_fields = {
+            "owner_org": org["id"],
+            "endpoint_url": "sftp://scp-provider",
+            "sftp_port": "22",
+        }
+
+        fetch_resp = app.post(
+            "/provider-harvest/sources/fetch-host-key",
+            extra_environ=editor_environ,
+            data=base_fields,
+            follow_redirects=False,
+        )
+        assert fetch_resp.status_code == 200
+        body = fetch_resp.get_data(as_text=True)
+        assert "SHA256:" in body, "host key fingerprint was not filled into the re-rendered form"
+
+        import re
+        fingerprint = re.search(r"value=\"(SHA256:[^\"]+)\"", body).group(1)
+
+        resp = app.post(
+            "/provider-harvest/sources/new",
+            extra_environ=editor_environ,
+            data={
+                "name": "ui-scp-test-source",
+                "title": "UI SCP Test Source",
+                "owner_org": org["id"],
+                "transport_type": "ssh",
+                "ssh_subsystem": "scp",
+                "endpoint_url": "sftp://scp-provider",
+                "sftp_port": "22",
+                "sftp_remote_path": "/home/produser/upload",
+                "sftp_glob_pattern": "*.csv",
+                "sftp_username": "produser",
+                "sftp_password": "test-pass",
+                "host_key_fingerprint": fingerprint,
+                "dataset_title": "UI SCP Test Dataset",
+                "dataset_notes": "Created by the blueprint SCP smoke test.",
+                "frequency": "MANUAL",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 200), resp.get_data(as_text=True)
+
+        from ckanext.providerharvest.model import provider_source as provider_source_model
+        from ckan.model import Package, Session
+        pkg = Session.query(Package).filter_by(name="ui-scp-test-source", type="harvest").first()
+        assert pkg is not None, "provider_source_create was never actually called"
+        provider_source = provider_source_model.get_by_harvest_source_id(pkg.id)
+        assert provider_source is not None
+        assert provider_source.status == "pending"
+        assert provider_source.host_key_fingerprint == fingerprint
+
+        harvest_source = helpers.call_action(
+            "harvest_source_show", {"ignore_auth": True}, id=pkg.id
+        )
+        import json
+        assert json.loads(harvest_source["config"])["transport_type"] == "scp"
+
+    def test_ftp_register_via_web_form_with_plain_ftp_acknowledgment(
+        self, app, _allow_private_network
+    ):
+        """The FTP half of the self-service form: use_tls unchecked plus
+        the explicit acknowledgment checkbox, against the real
+        ftp-provider container (plain FTP only, see
+        docker/ftp-provider/Dockerfile)."""
+        org = factories.Organization()
+        editor = factories.User()
+        helpers.call_action(
+            "organization_member_create",
+            {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        editor_environ = {"REMOTE_USER": editor["name"]}
+
+        resp = app.post(
+            "/provider-harvest/sources/new",
+            extra_environ=editor_environ,
+            data={
+                "name": "ui-ftp-test-source",
+                "title": "UI FTP Test Source",
+                "owner_org": org["id"],
+                "transport_type": "ftp",
+                "endpoint_url": "ftp://ftp-provider",
+                "ftp_port": "21",
+                "ftp_remote_path": "/upload",
+                "ftp_glob_pattern": "*.csv",
+                "ftp_username": "produser",
+                "ftp_password": "test-pass",
+                # ftp_use_tls deliberately omitted (unchecked) --
+                # plain_ftp_acknowledged is what makes that acceptable.
+                "ftp_plain_ftp_acknowledged": "on",
+                "dataset_title": "UI FTP Test Dataset",
+                "dataset_notes": "Created by the blueprint FTP smoke test.",
+                "frequency": "MANUAL",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 200), resp.get_data(as_text=True)
+
+        from ckanext.providerharvest.model import provider_source as provider_source_model
+        from ckan.model import Package, Session
+        pkg = Session.query(Package).filter_by(name="ui-ftp-test-source", type="harvest").first()
+        assert pkg is not None, "provider_source_create was never actually called"
+        provider_source = provider_source_model.get_by_harvest_source_id(pkg.id)
+        assert provider_source is not None
+        assert provider_source.status == "pending"
+        assert provider_source.plain_ftp_acknowledged is True
+
+        harvest_source = helpers.call_action(
+            "harvest_source_show", {"ignore_auth": True}, id=pkg.id
+        )
+        import json
+        config = json.loads(harvest_source["config"])
+        assert config["transport_type"] == "ftp"
+        assert config["use_tls"] is False

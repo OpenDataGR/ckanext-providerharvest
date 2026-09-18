@@ -44,17 +44,18 @@
             <label for="field-transport_type">{{ _("Transport") }}</label>
             <select id="field-transport_type" name="transport_type" class="form-control">
               <option value="http" {{ "selected" if data.get('transport_type', 'http') == 'http' else "" }}>{{ _("HTTP API (per-record JSON, mapped into DataStore)") }}</option>
-              <option value="sftp" {{ "selected" if data.get('transport_type') == 'sftp' else "" }}>{{ _("SFTP (whole files, stored as CKAN resources)") }}</option>
+              <option value="ssh" {{ "selected" if data.get('transport_type') == 'ssh' else "" }}>{{ _("SFTP / SCP (whole files over SSH, stored as CKAN resources)") }}</option>
+              <option value="ftp" {{ "selected" if data.get('transport_type') == 'ftp' else "" }}>{{ _("FTP / FTPS (whole files, stored as CKAN resources)") }}</option>
             </select>
-            <span class="info-block">{{ _("Fill in only the matching section below -- HTTP API settings or SFTP settings.") }}</span>
+            <span class="info-block">{{ _("Fill in only the matching section below.") }}</span>
           </div>
           <div class="form-group">
-            <label for="field-endpoint_url">{{ _("Endpoint URL / SFTP host") }}</label>
-            <input id="field-endpoint_url" name="endpoint_url" type="text" class="form-control" required value="{{ data.get('endpoint_url', '') }}" placeholder="https://provider.example.com/api/records  --or--  sftp://provider.example.com">
+            <label for="field-endpoint_url">{{ _("Endpoint URL / host") }}</label>
+            <input id="field-endpoint_url" name="endpoint_url" type="text" class="form-control" required value="{{ data.get('endpoint_url', '') }}" placeholder="https://provider.example.com/api/records  --or--  sftp://provider.example.com  --or--  ftp://provider.example.com">
           </div>
         </fieldset>
 
-        <details {{ "open" if data.get('transport_type', 'http') != 'sftp' else "" }}>
+        <details {{ "open" if data.get('transport_type', 'http') == 'http' else "" }}>
           <summary><strong>{{ _("HTTP API settings") }}</strong></summary>
 
           <fieldset>
@@ -134,11 +135,18 @@
           </fieldset>
         </details>
 
-        <details {{ "open" if data.get('transport_type') == 'sftp' else "" }}>
-          <summary><strong>{{ _("SFTP settings") }}</strong></summary>
+        <details {{ "open" if data.get('transport_type') == 'ssh' else "" }}>
+          <summary><strong>{{ _("SFTP / SCP settings") }}</strong></summary>
 
           <fieldset>
             <legend>{{ _("Connection") }}</legend>
+            <div class="form-group">
+              <label for="field-ssh_subsystem">{{ _("Subsystem") }}</label>
+              <select id="field-ssh_subsystem" name="ssh_subsystem" class="form-control">
+                <option value="sftp" {{ "selected" if data.get('ssh_subsystem', 'sftp') == 'sftp' else "" }}>{{ _("SFTP (the SSH file-transfer subsystem -- try this first)") }}</option>
+                <option value="scp" {{ "selected" if data.get('ssh_subsystem') == 'scp' else "" }}>{{ _("SCP (for servers that only allow the scp command, not SFTP)") }}</option>
+              </select>
+            </div>
             <div class="form-group">
               <label for="field-sftp_port">{{ _("Port") }}</label>
               <input id="field-sftp_port" name="sftp_port" type="text" class="form-control" value="{{ data.get('sftp_port', '22') }}">
@@ -182,6 +190,59 @@
               <input id="field-host_key_fingerprint" name="host_key_fingerprint" type="text" class="form-control" value="{{ data.get('host_key_fingerprint', '') }}" placeholder="SHA256:...">
             </div>
             <button type="submit" formaction="{{ h.url_for('providerharvest.fetch_host_key') }}" formnovalidate class="btn btn-default">{{ _("Fetch host key") }}</button>
+          </fieldset>
+        </details>
+
+        <details {{ "open" if data.get('transport_type') == 'ftp' else "" }}>
+          <summary><strong>{{ _("FTP / FTPS settings") }}</strong></summary>
+
+          <fieldset>
+            <legend>{{ _("Connection") }}</legend>
+            <div class="form-group">
+              <label for="field-ftp_port">{{ _("Port") }}</label>
+              <input id="field-ftp_port" name="ftp_port" type="text" class="form-control" value="{{ data.get('ftp_port', '21') }}">
+            </div>
+            <div class="form-group">
+              <label for="field-ftp_remote_path">{{ _("Remote directory") }}</label>
+              <input id="field-ftp_remote_path" name="ftp_remote_path" type="text" class="form-control" value="{{ data.get('ftp_remote_path', '/') }}">
+            </div>
+            <div class="form-group">
+              <label for="field-ftp_glob_pattern">{{ _("Which files to pull (glob pattern)") }}</label>
+              <input id="field-ftp_glob_pattern" name="ftp_glob_pattern" type="text" class="form-control" value="{{ data.get('ftp_glob_pattern', '*') }}" placeholder="*.csv">
+            </div>
+            <div class="checkbox">
+              <label>
+                {# An unchecked checkbox submits nothing at all, so "not present yet" (the
+                   first GET, data={}) must default to checked, but "present and unchecked"
+                   (a validation-error retry) must NOT be forced back to checked. #}
+                <input name="ftp_use_tls" type="checkbox" {{ "checked" if (data.get('ftp_use_tls') == 'on' or 'ftp_use_tls' not in data) else "" }}>
+                {{ _("Use FTPS (encrypted) -- strongly recommended, leave this checked") }}
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>{{ _("Authentication (FTP)") }}</legend>
+            <div class="form-group">
+              <label for="field-ftp_username">{{ _("Username") }}</label>
+              <input id="field-ftp_username" name="ftp_username" type="text" class="form-control" value="{{ data.get('ftp_username', '') }}">
+            </div>
+            <div class="form-group">
+              <label for="field-ftp_password">{{ _("Password") }}</label>
+              <input id="field-ftp_password" name="ftp_password" type="password" class="form-control" autocomplete="new-password">
+              <span class="info-block">{{ _("Stored encrypted, never shown again.") }}</span>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>{{ _("Unencrypted FTP (only if this provider has no FTPS)") }}</legend>
+            <p class="info-block">{{ _("Plain FTP sends your username, password, and every file's contents over the network unencrypted. Only uncheck \"Use FTPS\" above and acknowledge this if the provider genuinely has no FTPS/SFTP capability -- registration will be rejected otherwise.") }}</p>
+            <div class="checkbox">
+              <label>
+                <input name="ftp_plain_ftp_acknowledged" type="checkbox" {{ "checked" if data.get('ftp_plain_ftp_acknowledged') == 'on' else "" }}>
+                {{ _("I understand this provider's FTP connection will be unencrypted, and accept that risk.") }}
+              </label>
+            </div>
           </fieldset>
         </details>
 

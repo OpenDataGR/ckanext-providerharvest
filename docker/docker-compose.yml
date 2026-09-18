@@ -126,3 +126,26 @@ services:
       - ./sftp-provider/upload:/home/produser/upload:ro
     command: ["produser:${SFTP_PROVIDER_PASSWORD:-test-pass}:1001:1001:upload"]
     restart: unless-stopped
+
+  # Throwaway mock SCP provider for the Phase 1.5 ScpTransport
+  # end-to-end test -- a plain OpenSSH server (built here, not
+  # atmoz/sftp: that image forces ForceCommand internal-sftp, which
+  # blocks the raw scp/exec-channel commands ScpTransport actually
+  # needs). See docker/scp-provider/Dockerfile. Not something a real
+  # provider registration would ever point at.
+  scp-provider:
+    build:
+      context: scp-provider
+    restart: unless-stopped
+
+  # Throwaway mock FTP provider for the Phase 1.5 FTPTransport
+  # end-to-end test -- plain FTP only (vsftpd), exercising the
+  # explicit-acknowledgment path DESIGN.md's Phase 1.5 notes call for;
+  # see docker/ftp-provider/Dockerfile for why FTPS isn't exercised
+  # here (that path is already covered by test_transport_ftp.py's
+  # fakes). Not something a real provider registration would ever
+  # point at.
+  ftp-provider:
+    build:
+      context: ftp-provider
+    restart: unless-stopped
