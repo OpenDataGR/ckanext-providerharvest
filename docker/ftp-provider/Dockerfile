@@ -22,6 +22,14 @@ RUN apk add --no-cache proftpd \
     && adduser -D -h /home/produser -s /sbin/nologin produser \
     && echo "produser:test-pass" | chpasswd \
     && mkdir -p /home/produser/upload \
+    # Alpine's proftpd package doesn't create its own runtime dir --
+    # without it, the master process crash-loops silently on startup
+    # (confirmed via a real CI run: "unable to bind to local socket",
+    # "error opening DelayTable", "error opening scoreboard", all
+    # "No such file or directory" under /run/proftpd). Docker containers
+    # don't wipe /run on start (that's a systemd/tmpfs convention, not a
+    # Docker default), so creating it at build time is enough.
+    && mkdir -p /run/proftpd \
     && chown -R produser:produser /home/produser
 
 COPY upload/ /home/produser/upload/
