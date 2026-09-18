@@ -44,15 +44,16 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
   form-driven flow at `/provider-harvest/sources` (list) and
   `/provider-harvest/sources/new` (register + test-connection preview),
   plus a sysadmin approval queue at `/provider-harvest/admin/pending`.
+  Covers both transport types: an HTTP API section and an SFTP section
+  (port/remote_path/glob, username + password-or-private-key auth, and a
+  "Fetch host key" step for the SSH trust-on-first-use confirmation
+  `provider_source_create` requires -- see `provider_source_fetch_host_key`).
   Field-mapping rows are plain repeatable form fields for now, not a
   dynamic JS editor -- see the blueprint's module docstring.
 
 **Not yet built:** SCP/FTP transports, Basic/OAuth2/mTLS auth, and the
 broker/relay transport (Phase 1.5 remainder); a real dynamic field-mapping
-editor, richer approval-workflow UI, and SFTP-specific fields (host-key
-confirmation step, host/port/remote_path/glob inputs) in the self-service
-web UI (Phase 2 follow-ons -- the SFTP flow is API-only for now, see
-`provider_source_fetch_host_key`/`provider_source_create`).
+editor and richer approval-workflow UI (Phase 2 follow-ons).
 
 ## Development
 
