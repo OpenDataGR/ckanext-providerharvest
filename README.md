@@ -10,7 +10,8 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
 
 ## Status
 
-**Phase 1 (MVP) and Phase 1.5 (file transports) complete.** Implemented so far:
+**Phase 1 (MVP), Phase 1.5 (file transports), and Phase 2 (self-service UI +
+auth strategies) complete.** Implemented so far:
 
 - `GenericProviderHarvester` -- one harvester class, config-driven (see
   `ckanext/providerharvest/harvesters/base_generic.py`).
@@ -68,9 +69,9 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
 - Job-failure email notifications to the provider's registered contact
   after repeated consecutive failures (`notifications.py`).
 - Self-service web UI (`blueprints/provider_ui.py`, Phase 2): a
-  form-driven flow at `/provider-harvest/sources` (list) and
-  `/provider-harvest/sources/new` (register + test-connection preview),
-  plus a sysadmin approval queue at `/provider-harvest/admin/pending`.
+  form-driven flow at `/provider-harvest/sources` (list, with per-source
+  status and self-service Pause/Resume for the owning org's admins) and
+  `/provider-harvest/sources/new` (register + test-connection preview).
   Covers all four transports: an HTTP API section, one shared "SFTP / SCP"
   section (a subsystem sub-selector picks which, since they're identical
   fields otherwise -- port/remote_path/glob, username + password-or-
@@ -78,24 +79,27 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
   an "FTP / FTPS" section (with the `use_tls`/plain-FTP-acknowledgment
   checkboxes). The HTTP API section also has an "Authentication" method
   selector (API key / Basic / OAuth2 / mTLS) alongside pagination.
-  Field-mapping rows are plain repeatable form fields for now, not a
-  dynamic JS editor -- see the blueprint's module docstring.
+  Field-mapping rows are a small vanilla-JS add/remove editor (a few rows
+  still pre-render so the form works with JS disabled) instead of a fixed
+  slot count.
+- Two sysadmin approval views: `/provider-harvest/admin/pending` (the
+  narrow queue -- Activate or Reject-with-a-reason a new registration)
+  and `/provider-harvest/admin/sources` (every source regardless of
+  status, with Pause/Resume for active/paused ones alongside a link back
+  to the pending queue).
 
-**Not yet built:** the broker/relay transport (DESIGN.md marks it
-stub-only); a real dynamic field-mapping editor and richer
-approval-workflow UI (Phase 2 follow-ons).
+**Not yet built:** the broker/relay transport, and Vault-backed
+`SecretsBackend` (DESIGN.md marks both as later-phase/stub-only).
 
-**Verification status:** Basic auth and OAuth2 client-credentials are
-backed by unit tests (`test_auth_strategies.py`, fakes -- no real network)
-and a Docker-replica integration test
-(`test_e2e_http_auth_strategies.py`, against `docker/mock-provider/`'s
-`/records-basic` and `/records-bearer` + `/oauth/token` endpoints) that
-has not yet been run in CI (implemented together with the rest of this
-phase, verification batched for the end of it). mTLS is unit-tested only
--- no Docker test, for the same reason FTPS isn't exercised there either
-(see `transport/ftp.py`'s docstring): a self-signed cert in a disposable
-test container would correctly fail the real certificate verification
-this extension never disables.
+**Verification status:** everything above is CI-verified against the
+Docker replica (`test_auth_strategies.py`/`test_transport_*.py` unit
+tests with fakes, plus `test_e2e_http_auth_strategies.py`,
+`test_approval_workflow.py`, and the `test_blueprint.py` UI-route cases
+against real containers/servers) -- except mTLS, which is unit-tested
+only, no Docker test, for the same reason FTPS isn't exercised there
+either (see `transport/ftp.py`'s docstring): a self-signed cert in a
+disposable test container would correctly fail the real certificate
+verification this extension never disables.
 
 ## Development
 
