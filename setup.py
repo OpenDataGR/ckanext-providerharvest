@@ -19,6 +19,7 @@ setup(
         "cryptography>=42.0",
         "jsonpath-ng>=1.6",
         "paramiko>=3.4",  # SFTP/SCP transports, phase 1.5
+        "scp>=0.15",  # ScpTransport -- thin SCP-protocol wrapper over paramiko.Transport
     ],
     extras_require={
         "dev": ["pytest>=8.0"],

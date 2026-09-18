@@ -45,11 +45,11 @@ def provider_source_create_schema() -> dict:
         "delivery_mode": [ignore_missing, unicode_safe],
         "notification_email": [ignore_missing, unicode_safe],
         "notification_webhook_url": [ignore_missing, unicode_safe],
-        # SFTP-only (transport_type="sftp"); left optional at the schema
-        # level and cross-validated by hand in logic/action.py -- navl has
-        # no "required only if some other field equals X" validator, and
-        # these fields are meaningless (and correctly absent) for
-        # transport_type="http" sources.
+        # SSH-only (transport_type="sftp"|"scp"); left optional at the
+        # schema level and cross-validated by hand in logic/action.py --
+        # navl has no "required only if some other field equals X"
+        # validator, and these fields are meaningless (and correctly
+        # absent) for transport_type="http" sources.
         "port": [ignore_missing, unicode_safe],
         "remote_path": [ignore_missing, unicode_safe],
         "glob_pattern": [ignore_missing, unicode_safe],

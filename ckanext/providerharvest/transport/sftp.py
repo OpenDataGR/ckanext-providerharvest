@@ -11,7 +11,10 @@ Security properties this transport is responsible for maintaining:
     connection: SSH has no CA hierarchy, so trust-on-first-use-with-
     pinning is the standard safe pattern -- the SSH analogue of TLS
     chain validation. There is deliberately no "skip host key check"
-    option; a mismatch always raises.
+    option; a mismatch always raises. This (and the authentication step)
+    is shared with ``ScpTransport`` via ``transport.ssh_common`` -- same
+    SSH connection, same trust model, only the file-listing/reading
+    mechanics differ between the two subsystems.
   * Files are listed (path/mtime/size only, never bytes) and opened as
     streamed, seekable-free handles -- callers must not read a whole
     file into memory, since these can be multi-GB provider exports.
@@ -23,7 +26,6 @@ Security properties this transport is responsible for maintaining:
 from __future__ import annotations
 
 import fnmatch
-import hashlib
 import stat
 import time
 from typing import BinaryIO, Callable, Optional
@@ -31,49 +33,19 @@ from typing import BinaryIO, Callable, Optional
 import paramiko
 
 from ckanext.providerharvest.audit import OutboundRequestEvent
-from ckanext.providerharvest.logic.validators import assert_safe_network_target
 from ckanext.providerharvest.secrets.base import SecretBundle
 from ckanext.providerharvest.transport.base import Entry, Page, Transport
+from ckanext.providerharvest.transport.ssh_common import (
+    DEFAULT_PORT,
+    DEFAULT_TIMEOUT_S,
+    HostKeyMismatchError,
+    connect_and_authenticate,
+    fetch_host_key_fingerprint,
+)
 
-DEFAULT_PORT = 22
-DEFAULT_TIMEOUT_S = 30
-
-
-class HostKeyMismatchError(Exception):
-    """The server's current host key doesn't match the one pinned at
-    registration time -- either the server changed keys for a real reason
-    (in which case a human needs to re-confirm and re-pin, not this code
-    silently accepting it), or something is impersonating it."""
-
-
-def _fingerprint(key: paramiko.PKey) -> str:
-    """SHA256 fingerprint, base64-encoded -- matches modern
-    ``ssh-keygen -E sha256`` output, which is what a provider would see
-    and be asked to confirm against, not paramiko's legacy MD5 default."""
-    import base64
-    digest = hashlib.sha256(key.asbytes()).digest()
-    return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
-
-
-def fetch_host_key_fingerprint(
-    host: str, port: int = DEFAULT_PORT, *, allow_private_ranges: bool = False,
-    timeout_s: int = DEFAULT_TIMEOUT_S,
-    transport_factory: Callable[[tuple], "paramiko.Transport"] = paramiko.Transport,
-) -> str:
-    """Connect just far enough to read the server's host key, without
-    authenticating. Used both by SFTPTransport's own pinning check and by
-    the ``provider_source_fetch_host_key`` action, so a provider can be
-    shown the real fingerprint to confirm before it's pinned."""
-    assert_safe_network_target(host, port, allow_private_ranges=allow_private_ranges)
-    transport = transport_factory((host, port))
-    try:
-        transport.start_client(timeout=timeout_s)
-        key = transport.get_remote_server_key()
-        if key is None:
-            raise HostKeyMismatchError("Server did not present a host key")
-        return _fingerprint(key)
-    finally:
-        transport.close()
+__all__ = [
+    "HostKeyMismatchError", "fetch_host_key_fingerprint", "SFTPTransport",
+]
 
 
 class SFTPTransport(Transport):
@@ -129,33 +101,16 @@ class SFTPTransport(Transport):
         ))
 
     def connect(self) -> None:
-        # Re-validated here (not just at registration time) so a DNS
-        # rebind between registration and this scheduled run is caught --
-        # same requirement as the HTTP transport.
-        assert_safe_network_target(
-            self._host, self._port, allow_private_ranges=self._allow_private_ranges
-        )
-
         started = time.monotonic()
         error = None
         try:
-            self._transport = self._transport_factory((self._host, self._port))
-            self._transport.start_client(timeout=self._connect_timeout_s)
-
-            key = self._transport.get_remote_server_key()
-            fingerprint = _fingerprint(key) if key else None
-            if self._pinned_host_key_fingerprint is None:
-                raise HostKeyMismatchError(
-                    "No host key has been pinned for this source -- register it via "
-                    "provider_source_fetch_host_key first"
-                )
-            if fingerprint != self._pinned_host_key_fingerprint:
-                raise HostKeyMismatchError(
-                    "Host key fingerprint changed: expected %s, got %s"
-                    % (self._pinned_host_key_fingerprint, fingerprint)
-                )
-
-            self._authenticate()
+            self._transport = connect_and_authenticate(
+                self._host, self._port, self._secret,
+                pinned_host_key_fingerprint=self._pinned_host_key_fingerprint,
+                allow_private_ranges=self._allow_private_ranges,
+                connect_timeout_s=self._connect_timeout_s,
+                transport_factory=self._transport_factory,
+            )
             self._sftp = self._sftp_client_factory(self._transport)
         except Exception as exc:  # noqa: BLE001 -- reported then re-raised, not swallowed
             error = str(exc)
@@ -164,26 +119,6 @@ class SFTPTransport(Transport):
             self._report(
                 "CONNECT", self._remote_path,
                 status=None, duration_ms=(time.monotonic() - started) * 1000, error=error,
-            )
-
-    def _authenticate(self) -> None:
-        fields = self._secret.fields
-        username = fields.get("username")
-        if not username:
-            raise ValueError("SSH secret bundle is missing 'username'")
-
-        if "private_key_pem" in fields:
-            import io
-            pkey = paramiko.RSAKey.from_private_key(
-                io.StringIO(fields["private_key_pem"]),
-                password=fields.get("private_key_passphrase") or None,
-            )
-            self._transport.auth_publickey(username, pkey)
-        elif "password" in fields:
-            self._transport.auth_password(username, fields["password"])
-        else:
-            raise ValueError(
-                "SSH secret bundle needs either 'password' or 'private_key_pem'"
             )
 
     def close(self) -> None:

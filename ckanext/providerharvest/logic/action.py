@@ -68,14 +68,19 @@ def _parse_host(endpoint_url: str) -> str:
     return endpoint_url.split("/")[0].split(":")[0]
 
 
-def _require_sftp_fields(data_dict: dict) -> None:
-    if data_dict.get("transport_type") != "sftp":
+#: Transports that connect over SSH -- see base_generic.SSH_TRANSPORT_TYPES
+#: for the harvester-side counterpart of this same grouping.
+SSH_TRANSPORT_TYPES = ("sftp", "scp")
+
+
+def _require_ssh_fields(data_dict: dict) -> None:
+    if data_dict.get("transport_type") not in SSH_TRANSPORT_TYPES:
         return
     errors = {}
     if not data_dict.get("host_key_fingerprint"):
         errors["host_key_fingerprint"] = [
-            "Required for transport_type=sftp -- fetch and confirm it via "
-            "provider_source_fetch_host_key first"
+            "Required for transport_type=%s -- fetch and confirm it via "
+            "provider_source_fetch_host_key first" % data_dict.get("transport_type")
         ]
     if errors:
         raise toolkit.ValidationError(errors)
@@ -123,12 +128,12 @@ def provider_source_test_connection(context, data_dict):
     from ckanext.providerharvest.secrets.base import SecretBundle
 
     transport_type = data_dict.get("transport_type")
-    if transport_type == "sftp":
-        return _test_sftp_connection(data_dict)
+    if transport_type in SSH_TRANSPORT_TYPES:
+        return _test_ssh_connection(data_dict, transport_type)
     if transport_type != "http":
         raise toolkit.ValidationError(
-            "transport_type %r is not yet implemented (available: http, sftp)"
-            % transport_type
+            "transport_type %r is not yet implemented (available: http, %s)"
+            % (transport_type, ", ".join(SSH_TRANSPORT_TYPES))
         )
 
     from ckanext.providerharvest.auth_strategies.api_key import ApiKeyAuth
@@ -162,18 +167,20 @@ def provider_source_test_connection(context, data_dict):
     return {"sample_records": sample_records, "preview_rows": preview_rows}
 
 
-def _test_sftp_connection(data_dict):
-    """SFTP's dry run lists the remote directory (path/mtime/size only,
-    never file contents -- there's no per-record mapping to preview for a
-    bulk-file source) and requires a fingerprint to already be pinned, so
-    this exercises the exact same host-key check a real harvest run will
-    make, not a weaker one."""
+def _test_ssh_connection(data_dict, transport_type):
+    """SFTP/SCP's dry run lists the remote directory (path/mtime/size
+    only, never file contents -- there's no per-record mapping to
+    preview for a bulk-file source) and requires a fingerprint to
+    already be pinned, so this exercises the exact same host-key check a
+    real harvest run will make, not a weaker one."""
     from ckanext.providerharvest.secrets.base import SecretBundle
+    from ckanext.providerharvest.transport.scp import ScpTransport
     from ckanext.providerharvest.transport.sftp import SFTPTransport
 
-    _require_sftp_fields(data_dict)
+    _require_ssh_fields(data_dict)
     secret = SecretBundle(fields=data_dict["credential_fields"])  # not yet persisted
-    transport = SFTPTransport(
+    transport_cls = SFTPTransport if transport_type == "sftp" else ScpTransport
+    transport = transport_cls(
         _parse_host(data_dict["endpoint_url"]),
         secret=secret,
         port=int(data_dict.get("port") or 22),
@@ -192,14 +199,17 @@ def _test_sftp_connection(data_dict):
 
 
 def provider_source_fetch_host_key(context, data_dict):
-    """Connects just far enough to read the SFTP server's host key and
+    """Connects just far enough to read the SSH server's host key and
     returns its fingerprint for the provider to confirm, WITHOUT
     authenticating or persisting anything -- the trust-on-first-use step
     that must happen before a fingerprint can be pinned via
-    ``provider_source_create``'s ``host_key_fingerprint`` field."""
+    ``provider_source_create``'s ``host_key_fingerprint`` field. Same
+    connection code (and same fingerprint) regardless of whether the
+    source ends up using transport_type=sftp or scp -- both are the same
+    SSH server, just a different subsystem."""
     toolkit.check_access("provider_source_fetch_host_key", context, data_dict)
 
-    from ckanext.providerharvest.transport.sftp import fetch_host_key_fingerprint
+    from ckanext.providerharvest.transport.ssh_common import fetch_host_key_fingerprint
 
     host = _parse_host(data_dict["endpoint_url"])
     fingerprint = fetch_host_key_fingerprint(host, int(data_dict.get("port") or 22))
@@ -232,7 +242,7 @@ def provider_source_create(context, data_dict):
     if errors:
         raise toolkit.ValidationError(errors)
     data_dict.update(nested)
-    _require_sftp_fields(data_dict)
+    _require_ssh_fields(data_dict)
 
     owner_org = data_dict["owner_org"]
     # The secret's harvest_source_id column is bookkeeping/audit metadata
@@ -252,7 +262,7 @@ def provider_source_create(context, data_dict):
         "auth_opts": data_dict.get("auth_opts"),
         "delivery_mode": data_dict.get("delivery_mode", "api_records"),
     }
-    if data_dict["transport_type"] == "sftp":
+    if data_dict["transport_type"] in SSH_TRANSPORT_TYPES:
         config.update({
             "host": _parse_host(data_dict["endpoint_url"]),
             "port": int(data_dict.get("port") or 22),

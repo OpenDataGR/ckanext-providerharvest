@@ -16,16 +16,24 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
   `ckanext/providerharvest/harvesters/base_generic.py`).
 - `DirectHTTPSTransport` -- HTTP JSON APIs, paginated, `delivery_mode=api_records`
   (per-record field mapping into DataStore).
-- `SFTPTransport` (Phase 1.5) -- paramiko-based, SSH host-key pinned at
-  registration time via `provider_source_fetch_host_key` (trust-on-first-use;
-  every later connection re-verifies the fingerprint and refuses to proceed on
-  a mismatch). `delivery_mode=bulk_file`: whole remote files (glob-filtered)
+- `SFTPTransport` and `ScpTransport` (Phase 1.5) -- both paramiko-based and
+  sharing the exact same connection/host-key/auth code
+  (`transport/ssh_common.py`): SSH host-key pinned at registration time via
+  `provider_source_fetch_host_key` (trust-on-first-use; every later
+  connection re-verifies the fingerprint and refuses to proceed on a
+  mismatch). `delivery_mode=bulk_file`: whole remote files (glob-filtered)
   are streamed straight into CKAN resources via `loaders/file_resource_loader.py`,
   with ckanext-xloader's existing automatic resource-create/update hook doing
-  the actual DataStore load -- no manual trigger needed. SCP/FTP are not yet
-  built (planned to reuse the same host-key-pinning connection code).
+  the actual DataStore load -- no manual trigger needed. SFTP streams files
+  directly; SCP has no streamed-read equivalent (whole-file push/pull
+  protocol) so it downloads to a throwaway temp file first. SCP's own
+  `list_entries` has no native directory-listing call either, so it runs a
+  single fixed/parameterized `find` command over an exec channel instead
+  (path/glob shell-quoted and restricted to a safe character set). SCP's
+  self-service UI/registration form and Docker-replica verification are
+  still pending -- see "Not yet built" below. FTP is not yet built.
 - `ApiKeyAuth` -- the only HTTP auth strategy implemented so far (irrelevant
-  for SFTP, which authenticates from the secret's own shape -- username +
+  for SFTP/SCP, which authenticate from the secret's own shape -- username +
   password or private key -- instead of the `AuthStrategy` interface).
 - `EnvelopeSecretsBackend` -- AES-256-GCM envelope encryption for provider
   credentials, master key outside the CKAN database.
@@ -51,9 +59,13 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
   Field-mapping rows are plain repeatable form fields for now, not a
   dynamic JS editor -- see the blueprint's module docstring.
 
-**Not yet built:** SCP/FTP transports, Basic/OAuth2/mTLS auth, and the
-broker/relay transport (Phase 1.5 remainder); a real dynamic field-mapping
-editor and richer approval-workflow UI (Phase 2 follow-ons).
+**Not yet built:** `FTPTransport` (Phase 1.5 remainder), Basic/OAuth2/mTLS
+auth, and the broker/relay transport; `ScpTransport`'s self-service UI
+fields, source-list "Transport" recognition, and Docker-replica
+verification (backend + unit tests only so far -- not yet exercised
+against a real SCP-only server, deliberately deferred to land together
+with FTP's own verification pass); a real dynamic field-mapping editor and
+richer approval-workflow UI (Phase 2 follow-ons).
 
 ## Development
 

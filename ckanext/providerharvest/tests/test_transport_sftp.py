@@ -109,9 +109,11 @@ def _sftp_client_factory(listing=()):
 
 @pytest.fixture(autouse=True)
 def patch_resolver(monkeypatch):
-    import ckanext.providerharvest.transport.sftp as mod
+    # The actual call now lives in ssh_common (shared with ScpTransport),
+    # not in this module -- see transport/ssh_common.py.
+    import ckanext.providerharvest.transport.ssh_common as ssh_common_mod
     monkeypatch.setattr(
-        mod, "assert_safe_network_target",
+        ssh_common_mod, "assert_safe_network_target",
         lambda host, port, allow_private_ranges=False: ["203.0.113.10"],
     )
     yield

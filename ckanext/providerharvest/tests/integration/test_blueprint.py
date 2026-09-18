@@ -23,10 +23,12 @@ _REQUIRED_PLUGINS = (
 def _allow_private_network(monkeypatch):
     # Same reasoning as test_e2e_sftp_harvest.py: sftp-provider's
     # compose-network address is exactly what the real SSRF-class
-    # validator exists to reject for a real registration.
-    import ckanext.providerharvest.transport.sftp as transport_mod
+    # validator exists to reject for a real registration. Patched in
+    # ssh_common (shared by SFTPTransport/ScpTransport) -- see
+    # transport/ssh_common.py.
+    import ckanext.providerharvest.transport.ssh_common as ssh_common_mod
     monkeypatch.setattr(
-        transport_mod, "assert_safe_network_target",
+        ssh_common_mod, "assert_safe_network_target",
         lambda host, port, allow_private_ranges=False: [host],
     )
 

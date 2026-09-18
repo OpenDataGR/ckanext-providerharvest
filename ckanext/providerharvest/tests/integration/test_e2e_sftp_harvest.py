@@ -32,9 +32,11 @@ def _allow_private_network(monkeypatch):
     # SSRF-class validator exists to reject for a real registration (see
     # DESIGN.md) -- bypassed here the same way test_e2e_harvest.py does
     # for mock-provider, not by loosening anything in extension code.
-    import ckanext.providerharvest.transport.sftp as transport_mod
+    # Patched in ssh_common (shared by SFTPTransport/ScpTransport), not
+    # transport.sftp -- see transport/ssh_common.py.
+    import ckanext.providerharvest.transport.ssh_common as ssh_common_mod
     monkeypatch.setattr(
-        transport_mod, "assert_safe_network_target",
+        ssh_common_mod, "assert_safe_network_target",
         lambda host, port, allow_private_ranges=False: [host],
     )
 

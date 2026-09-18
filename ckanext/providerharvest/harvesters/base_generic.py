@@ -38,6 +38,7 @@ from ckanext.providerharvest.secrets.envelope import EnvelopeSecretsBackend
 from ckanext.providerharvest.model.secret import SqlAlchemySecretRepository
 from ckanext.providerharvest.transport.base import Entry, Transport
 from ckanext.providerharvest.transport.direct_https import DirectHTTPSTransport
+from ckanext.providerharvest.transport.scp import ScpTransport
 from ckanext.providerharvest.transport.sftp import SFTPTransport
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,12 @@ log = logging.getLogger(__name__)
 _AUTH_STRATEGIES: dict[str, type[AuthStrategy]] = {
     "api_key": ApiKeyAuth,
 }
+
+#: Transports that connect over SSH (paramiko), sharing the exact same
+#: connection/host-key-pinning/auth code via transport.ssh_common -- only
+#: the file-listing/reading mechanics differ between them. See
+#: DESIGN.md's Phase 1.5 notes.
+SSH_TRANSPORT_TYPES = ("sftp", "scp")
 
 
 def default_secrets_backend() -> SecretsBackend:
@@ -89,14 +96,14 @@ class GenericProviderHarvester(HarvesterBase):
         transport_type = data.get("transport_type")
         if transport_type == "http":
             required.append("pagination")
-        elif transport_type == "sftp":
+        elif transport_type in SSH_TRANSPORT_TYPES:
             # NOT host_key_fingerprint: that's per-source trust state,
             # stored on ProviderSourceExtension.host_key_fingerprint (see
             # provider_source_create) and read from there by
             # _build_transport -- it deliberately never goes into this
             # config blob at all, so requiring it here would reject
-            # every real SFTP source at creation time (confirmed: this
-            # broke the SFTP integration test's very first
+            # every real SFTP/SCP source at creation time (confirmed:
+            # this broke the SFTP integration test's very first
             # harvest_source_create call).
             required += ["host", "remote_path"]
         missing = [key for key in required if key not in data]
@@ -112,19 +119,20 @@ class GenericProviderHarvester(HarvesterBase):
                 "store them via the secrets backend and reference by secret_ref" % sorted(leaked)
             )
 
-        if transport_type not in ("http", "sftp"):
+        supported_transports = ("http",) + SSH_TRANSPORT_TYPES
+        if transport_type not in supported_transports:
             raise toolkit.ValidationError(
-                "transport_type %r is not yet implemented (available: http, sftp)"
-                % transport_type
+                "transport_type %r is not yet implemented (available: %s)"
+                % (transport_type, ", ".join(supported_transports))
             )
 
         delivery_mode = data.get("delivery_mode", "api_records")
         # Each transport currently only supports the one delivery_mode
         # that actually makes sense for it: an HTTP JSON API yields
-        # per-record data to map into DataStore, an SFTP directory
+        # per-record data to map into DataStore, an SFTP/SCP directory
         # yields whole files to store as resources -- see DESIGN.md's
         # Phase 1.5 notes on why these aren't cross-combined (yet).
-        valid_combinations = {"http": "api_records", "sftp": "bulk_file"}
+        valid_combinations = {"http": "api_records", "sftp": "bulk_file", "scp": "bulk_file"}
         if delivery_mode != valid_combinations[transport_type]:
             raise toolkit.ValidationError(
                 "delivery_mode %r is not supported for transport_type=%r "
@@ -146,8 +154,8 @@ class GenericProviderHarvester(HarvesterBase):
             # auth_type/AuthStrategy is an HTTP-specific concept (how to
             # attach credentials to a request) -- SSH auth (password vs.
             # private key) is decided from the secret's own shape inside
-            # SFTPTransport instead, see its module docstring, so this
-            # is deliberately not called for transport_type=sftp below.
+            # ssh_common.connect_and_authenticate instead, so this is
+            # deliberately not called for the SSH transports below.
             auth_strategy = _build_auth_strategy(config["auth_type"])
             return DirectHTTPSTransport(
                 base_url=source.url,
@@ -162,9 +170,10 @@ class GenericProviderHarvester(HarvesterBase):
                 harvest_source_id=source.id,
                 harvest_job_id=job.id,
             )
-        if config["transport_type"] == "sftp":
+        if config["transport_type"] in SSH_TRANSPORT_TYPES:
             provider_source = provider_source_model.get_by_harvest_source_id(source.id)
-            return SFTPTransport(
+            transport_cls = SFTPTransport if config["transport_type"] == "sftp" else ScpTransport
+            return transport_cls(
                 config["host"],
                 secret=secret,
                 port=config.get("port", 22),
@@ -174,6 +183,7 @@ class GenericProviderHarvester(HarvesterBase):
                 # host_key_fingerprint field (see
                 # provider_source_fetch_host_key) -- not config, since
                 # it's per-source trust state, not transport behaviour.
+                # Shared between sftp/scp: same SSH server, same key.
                 pinned_host_key_fingerprint=(
                     provider_source.host_key_fingerprint if provider_source else None
                 ),
