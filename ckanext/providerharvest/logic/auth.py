@@ -91,3 +91,46 @@ def provider_source_list_pending(context: dict, data_dict: dict) -> dict:
     """Same reasoning as provider_source_activate: the approval queue is
     sysadmin-only, not org-scoped."""
     return {"success": False}
+
+
+def provider_source_reject(context: dict, data_dict: dict) -> dict:
+    """Same reasoning as provider_source_activate: denying a pending
+    source is a data.gov.gr admin action, never something the provider
+    grants themselves."""
+    return {"success": False}
+
+
+def provider_source_list_all(context: dict, data_dict: dict) -> dict:
+    """Same reasoning as provider_source_list_pending: the all-sources
+    admin dashboard is sysadmin-only, not org-scoped."""
+    return {"success": False}
+
+
+def _owner_org_for_pause_or_resume(data_dict: dict):
+    """Callers typically only have harvest_source_id in hand (e.g. from
+    their own source list or the admin dashboard), not owner_org --
+    unlike create/update/delete, which run before/independent of a
+    ProviderSourceExtension row necessarily existing. Looking it up here
+    means the caller doesn't have to know it ahead of time."""
+    harvest_source_id = data_dict.get("harvest_source_id")
+    if not harvest_source_id:
+        return None
+    from ckanext.providerharvest.model import provider_source as provider_source_model
+    provider_source = provider_source_model.get_by_harvest_source_id(harvest_source_id)
+    return provider_source.owner_org if provider_source else None
+
+
+def provider_source_pause(context: dict, data_dict: dict) -> dict:
+    # Same role level as provider_source_delete's own reasoning:
+    # "turning a source off/on" is an org-admin action, not merely an
+    # editor one, but is still self-service (no data.gov.gr admin
+    # involvement needed) -- sysadmins reach this too, via CKAN's own
+    # check_access short-circuit, for the "richer" admin dashboard.
+    owner_org = _owner_org_for_pause_or_resume(data_dict)
+    if not owner_org:
+        return {"success": False, "msg": "No provider source found to check ownership against"}
+    return {"success": _has_org_role(context, owner_org, "admin")}
+
+
+def provider_source_resume(context: dict, data_dict: dict) -> dict:
+    return provider_source_pause(context, data_dict)

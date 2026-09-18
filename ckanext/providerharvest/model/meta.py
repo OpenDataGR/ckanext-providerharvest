@@ -23,7 +23,7 @@ provider_source_extension_table = sa.Table(
     sa.Column("harvest_source_id", sa.UnicodeText, nullable=False, unique=True, index=True),
     sa.Column("owner_org", sa.UnicodeText, nullable=False, index=True),
     sa.Column("delivery_mode", sa.UnicodeText, nullable=False, default="api_records"),
-    sa.Column("status", sa.UnicodeText, nullable=False, default="pending"),  # pending|active|paused
+    sa.Column("status", sa.UnicodeText, nullable=False, default="pending"),  # pending|active|paused|rejected
     sa.Column("ckan_package_id", sa.UnicodeText, nullable=True),
     sa.Column("ckan_resource_id", sa.UnicodeText, nullable=True),
     sa.Column("datastore_initialized", sa.Boolean, nullable=False, default=False),
@@ -33,6 +33,9 @@ provider_source_extension_table = sa.Table(
     sa.Column("last_notified_at", sa.DateTime, nullable=True),
     sa.Column("host_key_fingerprint", sa.UnicodeText, nullable=True),  # SFTP/SCP only
     sa.Column("plain_ftp_acknowledged", sa.Boolean, nullable=False, default=False),
+    # Set only when status="rejected" -- shown back to the provider on
+    # their own source list so a denial isn't a silent dead end.
+    sa.Column("rejection_reason", sa.UnicodeText, nullable=True),
     sa.Column("created", sa.DateTime, default=datetime.datetime.utcnow),
 )
 

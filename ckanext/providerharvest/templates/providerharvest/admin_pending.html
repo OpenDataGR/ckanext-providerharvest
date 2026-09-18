@@ -5,7 +5,10 @@
 {% block primary_content %}
   <div class="module">
     <div class="module-content">
-      <h1>{{ _("Pending provider sources") }}</h1>
+      <div class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h1>{{ _("Pending provider sources") }}</h1>
+        <a class="btn btn-default" href="{{ h.url_for('providerharvest.admin_all_sources') }}">{{ _("View all sources") }}</a>
+      </div>
       <p class="info-block">{{ _("Approving a source lets it start pulling data from a provider-controlled endpoint on a schedule. Review the endpoint before activating.") }}</p>
 
       {% if pending %}
@@ -27,8 +30,16 @@
                 <td><code>{{ source.url }}</code></td>
                 <td>{{ source.created }}</td>
                 <td>
-                  <form method="post" action="{{ h.url_for('providerharvest.admin_activate', harvest_source_id=source.harvest_source_id) }}">
+                  <form method="post" action="{{ h.url_for('providerharvest.admin_activate', harvest_source_id=source.harvest_source_id) }}" style="display:inline; margin-bottom: 0.5em;">
                     <button type="submit" class="btn btn-primary btn-sm">{{ _("Activate") }}</button>
+                  </form>
+                  {# No JS toggle here on purpose -- this stays visible unconditionally
+                     rather than depending on Bootstrap's collapse plugin being loaded. #}
+                  <form method="post" action="{{ h.url_for('providerharvest.admin_reject', harvest_source_id=source.harvest_source_id) }}">
+                    <div class="form-group" style="margin: 0.25em 0;">
+                      <textarea name="reason" class="form-control" rows="1" placeholder="{{ _('Rejection reason (shown to the provider)') }}"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-danger btn-sm">{{ _("Reject") }}</button>
                   </form>
                 </td>
               </tr>

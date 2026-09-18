@@ -149,7 +149,7 @@
           <fieldset>
             <legend>{{ _("Field mapping") }}</legend>
             <p class="info-block">{{ _("Map each provider field (a JSONPath into one record) to a DataStore column. Exactly one field must be marked as the primary key.") }}</p>
-            <table class="table">
+            <table class="table" id="row-rules-table">
               <thead>
                 <tr>
                   <th>{{ _("DataStore column") }}</th>
@@ -158,9 +158,10 @@
                   <th>{{ _("Transform") }}</th>
                   <th>{{ _("Primary key") }}</th>
                   <th>{{ _("Required") }}</th>
+                  <th></th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="row-rules-body">
                 {% for i in row_rule_slots %}
                   <tr>
                     <td><input name="row_rules-{{ i }}-ckan_field" type="text" class="form-control"></td>
@@ -177,10 +178,33 @@
                     </td>
                     <td><input name="row_rules-{{ i }}-is_primary_key" type="checkbox"></td>
                     <td><input name="row_rules-{{ i }}-required" type="checkbox"></td>
+                    <td><button type="button" class="btn btn-danger row-rules-remove" formnovalidate>{{ _("Remove") }}</button></td>
                   </tr>
                 {% endfor %}
               </tbody>
             </table>
+            <button type="button" id="row-rules-add" formnovalidate class="btn btn-default">{{ _("+ Add mapping row") }}</button>
+            <noscript><p class="info-block">{{ _("JavaScript is disabled -- the rows already on the page above still work, there just isn't a way to add more from here.") }}</p></noscript>
+
+            <template id="row-rules-template">
+              <tr>
+                <td><input name="row_rules-__INDEX__-ckan_field" type="text" class="form-control"></td>
+                <td><input name="row_rules-__INDEX__-source_path" type="text" class="form-control" placeholder="e.g. id or data.id"></td>
+                <td>
+                  <select name="row_rules-__INDEX__-field_type" class="form-control">
+                    {% for ft in field_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}
+                  </select>
+                </td>
+                <td>
+                  <select name="row_rules-__INDEX__-transform" class="form-control">
+                    {% for t in transforms %}<option value="{{ t }}">{{ t or _("none") }}</option>{% endfor %}
+                  </select>
+                </td>
+                <td><input name="row_rules-__INDEX__-is_primary_key" type="checkbox"></td>
+                <td><input name="row_rules-__INDEX__-required" type="checkbox"></td>
+                <td><button type="button" class="btn btn-danger row-rules-remove" formnovalidate>{{ _("Remove") }}</button></td>
+              </tr>
+            </template>
           </fieldset>
         </details>
 
@@ -328,4 +352,35 @@
       </form>
     </div>
   </div>
+
+  <script>
+    (function () {
+      // Progressive enhancement only: the pre-rendered rows above submit
+      // fine with this disabled, there's just no add/remove button. Each
+      // new row gets an index past every row already on the page (server
+      // side re-scans whatever indices are actually present, not a
+      // contiguous 0..N range, so removing a row from the middle is safe
+      // -- see provider_ui._row_rules_from_form).
+      var body = document.getElementById("row-rules-body");
+      var template = document.getElementById("row-rules-template");
+      var addButton = document.getElementById("row-rules-add");
+      if (!body || !template || !addButton) { return; }
+
+      var nextIndex = body.querySelectorAll("tr").length;
+
+      addButton.addEventListener("click", function () {
+        var html = template.innerHTML.split("__INDEX__").join(String(nextIndex));
+        nextIndex += 1;
+        var tmp = document.createElement("tbody");
+        tmp.innerHTML = html;
+        body.appendChild(tmp.firstElementChild);
+      });
+
+      body.addEventListener("click", function (event) {
+        if (event.target.classList.contains("row-rules-remove")) {
+          event.target.closest("tr").remove();
+        }
+      });
+    })();
+  </script>
 {% endblock %}

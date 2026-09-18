@@ -38,9 +38,13 @@ class ProviderHarvestPlugin(plugins.SingletonPlugin):
             "provider_source_create": action.provider_source_create,
             "provider_source_list_mine": action.provider_source_list_mine,
             "provider_source_list_pending": action.provider_source_list_pending,
+            "provider_source_list_all": action.provider_source_list_all,
             "provider_source_test_connection": action.provider_source_test_connection,
             "provider_source_fetch_host_key": action.provider_source_fetch_host_key,
             "provider_source_activate": action.provider_source_activate,
+            "provider_source_reject": action.provider_source_reject,
+            "provider_source_pause": action.provider_source_pause,
+            "provider_source_resume": action.provider_source_resume,
         }
 
     # -- IAuthFunctions ---------------------------------------------------
@@ -53,9 +57,13 @@ class ProviderHarvestPlugin(plugins.SingletonPlugin):
             "provider_source_delete": auth.provider_source_delete,
             "provider_source_list_mine": auth.provider_source_list_mine,
             "provider_source_list_pending": auth.provider_source_list_pending,
+            "provider_source_list_all": auth.provider_source_list_all,
             "provider_source_test_connection": auth.provider_source_test_connection,
             "provider_source_fetch_host_key": auth.provider_source_fetch_host_key,
             "provider_source_activate": auth.provider_source_activate,
+            "provider_source_reject": auth.provider_source_reject,
+            "provider_source_pause": auth.provider_source_pause,
+            "provider_source_resume": auth.provider_source_resume,
         }
 
     # -- IBlueprint ---------------------------------------------------

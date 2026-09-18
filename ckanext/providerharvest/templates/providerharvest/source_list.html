@@ -18,6 +18,8 @@
               <th>{{ _("Transport") }}</th>
               <th>{{ _("Endpoint") }}</th>
               <th>{{ _("Frequency") }}</th>
+              <th>{{ _("Status") }}</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -27,6 +29,27 @@
                 <td>{{ transport_type }}</td>
                 <td><code>{{ source.url }}</code></td>
                 <td>{{ source.frequency }}</td>
+                <td>
+                  {{ source.provider_status }}
+                  {% if source.provider_status == 'rejected' and source.rejection_reason %}
+                    <br><span class="info-block">{{ source.rejection_reason }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if source.owner_org in admin_org_ids %}
+                    {% if source.provider_status == 'active' %}
+                      <form method="post" action="{{ h.url_for('providerharvest.source_pause', harvest_source_id=source.id) }}" style="display:inline">
+                        <input type="hidden" name="came_from" value="{{ h.url_for('providerharvest.source_list') }}">
+                        <button type="submit" class="btn btn-default btn-sm">{{ _("Pause") }}</button>
+                      </form>
+                    {% elif source.provider_status == 'paused' %}
+                      <form method="post" action="{{ h.url_for('providerharvest.source_resume', harvest_source_id=source.id) }}" style="display:inline">
+                        <input type="hidden" name="came_from" value="{{ h.url_for('providerharvest.source_list') }}">
+                        <button type="submit" class="btn btn-default btn-sm">{{ _("Resume") }}</button>
+                      </form>
+                    {% endif %}
+                  {% endif %}
+                </td>
               </tr>
             {% endfor %}
           </tbody>

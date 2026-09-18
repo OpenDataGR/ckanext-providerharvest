@@ -43,6 +43,17 @@ def list_by_status(status: str) -> list[ProviderSourceExtension]:
     )
 
 
+def list_all() -> list[ProviderSourceExtension]:
+    """Every source regardless of status, newest first -- backs the
+    sysadmin "all sources" admin view (pause/resume/reject at a glance),
+    distinct from list_by_status's single-status queue."""
+    return (
+        Session.query(ProviderSourceExtension)
+        .order_by(ProviderSourceExtension.created.desc())
+        .all()
+    )
+
+
 def create(**kwargs) -> ProviderSourceExtension:
     obj = ProviderSourceExtension(**kwargs)
     Session.add(obj)

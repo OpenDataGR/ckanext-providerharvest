@@ -395,3 +395,225 @@ class TestProviderUIBlueprint:
         config = json.loads(harvest_source["config"])
         assert config["transport_type"] == "http"
         assert config["auth_type"] == "basic_auth"
+
+    def test_new_source_form_has_the_dynamic_row_rules_editor(self, app):
+        org = factories.Organization()
+        editor = factories.User()
+        helpers.call_action(
+            "organization_member_create",
+            {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        resp = app.get(
+            "/provider-harvest/sources/new",
+            extra_environ={"REMOTE_USER": editor["name"]},
+        )
+        body = resp.get_data(as_text=True)
+        assert 'id="row-rules-template"' in body
+        assert 'id="row-rules-add"' in body
+        assert "row_rules-__INDEX__-ckan_field" in body
+
+    def test_row_rules_with_a_gap_in_indices_all_parse(self, app):
+        """Simulates what a JS "remove middle row" leaves behind: indices
+        0 and 2 present, 1 missing -- provider_ui._row_rules_from_form
+        must not stop at the first gap (a fixed-slots form never needed
+        to handle this; the dynamic editor does)."""
+        org = factories.Organization()
+        editor = factories.User()
+        helpers.call_action(
+            "organization_member_create",
+            {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        editor_environ = {"REMOTE_USER": editor["name"]}
+
+        resp = app.post(
+            "/provider-harvest/sources/new",
+            extra_environ=editor_environ,
+            data={
+                "name": "ui-gap-rows-source",
+                "title": "UI Gap Rows Source",
+                "owner_org": org["id"],
+                "transport_type": "http",
+                "endpoint_url": "https://provider.example.com/api/records",
+                "auth_type": "api_key",
+                "api_key": "test-key",
+                "api_key_location": "header",
+                "api_key_name": "X-API-Key",
+                "pagination_style": "page_number",
+                "items_path": "results",
+                "page_param": "page",
+                "row_rules-0-ckan_field": "id",
+                "row_rules-0-source_path": "id",
+                "row_rules-0-field_type": "integer",
+                "row_rules-0-is_primary_key": "on",
+                # row_rules-1-* deliberately absent (removed client-side).
+                "row_rules-2-ckan_field": "name",
+                "row_rules-2-source_path": "name",
+                "row_rules-2-field_type": "text",
+                "dataset_title": "UI Gap Rows Dataset",
+                "dataset_notes": "Created by the gap-indices smoke test.",
+                "frequency": "MANUAL",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 200), resp.get_data(as_text=True)
+
+        from ckan.model import Package, Session
+        pkg = Session.query(Package).filter_by(
+            name="ui-gap-rows-source", type="harvest"
+        ).first()
+        assert pkg is not None, "provider_source_create was never actually called"
+
+        from ckanext.providerharvest.model import field_mapping as field_mapping_model
+        profile = field_mapping_model.load_latest(pkg.id)
+        assert sorted(r.ckan_field for r in profile.row_rules) == ["id", "name"]
+
+    def test_admin_reject_via_web_form(self, app):
+        org = factories.Organization()
+        editor = factories.User()
+        sysadmin = factories.Sysadmin()
+        helpers.call_action(
+            "organization_member_create", {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        created = helpers.call_action(
+            "provider_source_create", {"user": editor["name"], "ignore_auth": False},
+            name="ui-reject-source", owner_org=org["id"],
+            endpoint_url="https://provider.example.com/api/records",
+            transport_type="http", auth_type="api_key",
+            credential_fields={"api_key": "test-key"},
+            row_rules=[{
+                "ckan_field": "id", "source_path": "id",
+                "field_type": "integer", "is_primary_key": True,
+            }],
+            pagination={"style": "page_number", "items_path": "results"},
+            frequency="MANUAL",
+            dataset_defaults={
+                "title_translated": {"en": "UI Reject Source"},
+                "notes_translated": {"en": "For the reject-route smoke test."},
+            },
+        )
+
+        sysadmin_environ = {"REMOTE_USER": sysadmin["name"]}
+        resp = app.post(
+            "/provider-harvest/admin/sources/%s/reject" % created["harvest_source_id"],
+            extra_environ=sysadmin_environ,
+            data={"reason": "Not a real provider."},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 200)
+
+        from ckanext.providerharvest.model import provider_source as provider_source_model
+        provider_source = provider_source_model.get_by_harvest_source_id(created["harvest_source_id"])
+        assert provider_source.status == "rejected"
+        assert provider_source.rejection_reason == "Not a real provider."
+
+    def test_admin_all_sources_page_and_pause_resume_via_web_form(self, app):
+        org = factories.Organization()
+        editor = factories.User()
+        org_admin = factories.User()
+        sysadmin = factories.Sysadmin()
+        helpers.call_action(
+            "organization_member_create", {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        helpers.call_action(
+            "organization_member_create", {"ignore_auth": True},
+            id=org["id"], username=org_admin["name"], role="admin",
+        )
+        created = helpers.call_action(
+            "provider_source_create", {"user": editor["name"], "ignore_auth": False},
+            name="ui-pause-source", owner_org=org["id"],
+            endpoint_url="https://provider.example.com/api/records",
+            transport_type="http", auth_type="api_key",
+            credential_fields={"api_key": "test-key"},
+            row_rules=[{
+                "ckan_field": "id", "source_path": "id",
+                "field_type": "integer", "is_primary_key": True,
+            }],
+            pagination={"style": "page_number", "items_path": "results"},
+            frequency="MANUAL",
+            dataset_defaults={
+                "title_translated": {"en": "UI Pause Source"},
+                "notes_translated": {"en": "For the pause/resume-route smoke test."},
+            },
+        )
+        sysadmin_environ = {"REMOTE_USER": sysadmin["name"]}
+        helpers.call_action(
+            "provider_source_activate", {"user": sysadmin["name"]},
+            harvest_source_id=created["harvest_source_id"],
+        )
+
+        all_sources_resp = app.get(
+            "/provider-harvest/admin/sources", extra_environ=sysadmin_environ
+        )
+        assert all_sources_resp.status_code == 200
+        assert "UI Pause Source" in all_sources_resp.get_data(as_text=True)
+
+        # Self-service pause, as the owning org's admin (not the editor
+        # who registered it, not a sysadmin).
+        admin_environ = {"REMOTE_USER": org_admin["name"]}
+        pause_resp = app.post(
+            "/provider-harvest/sources/%s/pause" % created["harvest_source_id"],
+            extra_environ=admin_environ,
+            follow_redirects=False,
+        )
+        assert pause_resp.status_code in (302, 200)
+
+        from ckanext.providerharvest.model import provider_source as provider_source_model
+        provider_source = provider_source_model.get_by_harvest_source_id(created["harvest_source_id"])
+        assert provider_source.status == "paused"
+
+        resume_resp = app.post(
+            "/provider-harvest/sources/%s/resume" % created["harvest_source_id"],
+            extra_environ=admin_environ,
+            follow_redirects=False,
+        )
+        assert resume_resp.status_code in (302, 200)
+
+        provider_source = provider_source_model.get_by_harvest_source_id(created["harvest_source_id"])
+        assert provider_source.status == "active"
+
+    def test_org_editor_pause_button_is_not_rendered_but_route_still_denies(self, app):
+        """source_list.html only shows Pause/Resume to org admins (see
+        _admin_org_ids_for_current_user) -- confirm the route itself
+        still enforces that even if a plain editor posts to it directly."""
+        org = factories.Organization()
+        editor = factories.User()
+        sysadmin = factories.Sysadmin()
+        helpers.call_action(
+            "organization_member_create", {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        created = helpers.call_action(
+            "provider_source_create", {"user": editor["name"], "ignore_auth": False},
+            name="ui-pause-denied-source", owner_org=org["id"],
+            endpoint_url="https://provider.example.com/api/records",
+            transport_type="http", auth_type="api_key",
+            credential_fields={"api_key": "test-key"},
+            row_rules=[{
+                "ckan_field": "id", "source_path": "id",
+                "field_type": "integer", "is_primary_key": True,
+            }],
+            pagination={"style": "page_number", "items_path": "results"},
+            frequency="MANUAL",
+            dataset_defaults={
+                "title_translated": {"en": "UI Pause Denied Source"},
+                "notes_translated": {"en": "For the pause-denied smoke test."},
+            },
+        )
+        helpers.call_action(
+            "provider_source_activate", {"user": sysadmin["name"]},
+            harvest_source_id=created["harvest_source_id"],
+        )
+
+        editor_environ = {"REMOTE_USER": editor["name"]}
+        list_resp = app.get("/provider-harvest/sources", extra_environ=editor_environ)
+        assert "Pause" not in list_resp.get_data(as_text=True)
+
+        pause_resp = app.post(
+            "/provider-harvest/sources/%s/pause" % created["harvest_source_id"],
+            extra_environ=editor_environ,
+        )
+        assert pause_resp.status_code == 403

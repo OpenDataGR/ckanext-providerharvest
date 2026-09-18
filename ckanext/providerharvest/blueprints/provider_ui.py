@@ -1,21 +1,33 @@
 """Self-service web UI for provider sources -- the Phase 2 piece that was
 previously only reachable via the raw Action API (see README.md). Thin:
 every route just builds a payload from the submitted form and hands it to
-this extension's own actions (provider_source_create/_test_connection/
-_activate/_list_mine/_list_pending), which already carry all the real
+this extension's own actions, which already carry all the real
 validation, org-scoping, and security logic -- this module has none of
 its own.
 
-Field-mapping rows use plain, JS-free repeatable form fields
-(``row_rules-<n>-<key>``, a fixed number of pre-rendered slots) rather
-than a dynamic JS editor -- fewer moving parts for an MVP, and DESIGN.md's
-"mapping_editor" template can grow real add/remove JS later without
-changing the submitted field shape.
+Field-mapping rows use a small vanilla-JS add/remove editor
+(source_form.html's ``<template>`` + inline ``<script>``, no framework/
+build step) over the same ``row_rules-<n>-<key>`` field shape the
+original JS-free MVP used -- a handful of rows are still pre-rendered so
+the form still works with JS disabled, just without add/remove.
+Removing a row client-side leaves a gap in the index sequence, so
+``_row_rules_from_form`` below scans every present index rather than
+stopping at the first missing one (a fixed-slots form never needed to).
+
+The approval workflow has two admin views: ``admin_pending`` (the
+original narrow queue -- Activate/Reject a pending registration) and
+``admin_all_sources`` (every source regardless of status, with Pause/
+Resume for active/paused ones). Pause/resume are also self-service, from
+a provider's own ``source_list`` -- reachable by the owning org's admins,
+not just data.gov.gr sysadmins, and both routes are shared between the
+two callers (``came_from`` in the POST body decides where to redirect
+back to, see ``_source_pause_or_resume``).
 """
 
 from __future__ import annotations
 
 import json
+import re
 
 import flask
 
@@ -25,9 +37,10 @@ providerharvest = flask.Blueprint(
     "providerharvest", __name__, url_prefix="/provider-harvest"
 )
 
-#: Pre-rendered field-mapping rows in the form; empty ones are dropped
-#: server-side. Plenty for a first cut -- see module docstring.
-ROW_RULE_SLOTS = range(10)
+#: Pre-rendered field-mapping rows in the form before any JS add/remove;
+#: covers the common case without scrolling, more can be added client-side.
+ROW_RULE_SLOTS = range(3)
+_ROW_RULE_INDEX_RE = re.compile(r"^row_rules-(\d+)-ckan_field$")
 FIELD_TYPES = ["text", "numeric", "integer", "boolean", "timestamp"]
 TRANSFORMS = ["", "strip", "lower"]
 FREQUENCIES = ["MANUAL", "DAILY", "WEEKLY", "MONTHLY"]
@@ -49,13 +62,18 @@ def _orgs_for_current_user() -> list[dict]:
 
 
 def _row_rules_from_form(form) -> list[dict]:
+    # Scans every row_rules-<n>-ckan_field key present rather than
+    # stopping at the first missing index -- a JS "remove row" can leave
+    # a gap (e.g. rows 0 and 2 present, 1 removed), see module docstring.
+    indices = sorted({
+        int(match.group(1))
+        for key in form.keys()
+        for match in [_ROW_RULE_INDEX_RE.match(key)]
+        if match
+    })
     rules = []
-    i = 0
-    while True:
-        ckan_field = form.get("row_rules-%d-ckan_field" % i)
-        if ckan_field is None:
-            break  # no more slots in the submitted form
-        ckan_field = ckan_field.strip()
+    for i in indices:
+        ckan_field = form.get("row_rules-%d-ckan_field" % i, "").strip()
         source_path = form.get("row_rules-%d-source_path" % i, "").strip()
         if ckan_field and source_path:
             rules.append({
@@ -66,7 +84,6 @@ def _row_rules_from_form(form) -> list[dict]:
                 "is_primary_key": form.get("row_rules-%d-is_primary_key" % i) == "on",
                 "required": form.get("row_rules-%d-required" % i) == "on",
             })
-        i += 1
     return rules
 
 
@@ -189,6 +206,22 @@ def _transport_type(source: dict) -> str:
         return "?"
 
 
+def _admin_org_ids_for_current_user() -> set:
+    """Orgs the current user can pause/resume sources in -- provider_
+    source_pause/_resume require org-admin, one level above the editor
+    role provider_source_list_mine itself only needs, so knowing this
+    lets the template skip rendering a button that would just 403."""
+    if not toolkit.g.user:
+        return set()
+    try:
+        orgs = toolkit.get_action("organization_list_for_user")(
+            dict(_context()), {"id": toolkit.g.user, "permission": "admin"}
+        )
+    except toolkit.NotAuthorized:
+        return set()
+    return {org["id"] for org in orgs}
+
+
 def source_list():
     if not toolkit.g.user:
         return toolkit.redirect_to("user.login")
@@ -198,7 +231,10 @@ def source_list():
         return toolkit.abort(403)
     return toolkit.render(
         "providerharvest/source_list.html",
-        extra_vars={"sources": [(s, _transport_type(s)) for s in sources]},
+        extra_vars={
+            "sources": [(s, _transport_type(s)) for s in sources],
+            "admin_org_ids": _admin_org_ids_for_current_user(),
+        },
     )
 
 
@@ -355,6 +391,66 @@ def admin_activate(harvest_source_id):
     return toolkit.redirect_to("providerharvest.admin_pending")
 
 
+def admin_reject(harvest_source_id):
+    reason = flask.request.form.get("reason", "").strip()
+    try:
+        toolkit.get_action("provider_source_reject")(
+            _context(), {"harvest_source_id": harvest_source_id, "reason": reason}
+        )
+    except toolkit.NotAuthorized:
+        return toolkit.abort(403)
+    except toolkit.ObjectNotFound:
+        return toolkit.abort(404)
+    except toolkit.ValidationError as exc:
+        toolkit.h.flash_error(str(exc))
+        return toolkit.redirect_to("providerharvest.admin_pending")
+    toolkit.h.flash_success(toolkit._("Source rejected."))
+    return toolkit.redirect_to("providerharvest.admin_pending")
+
+
+def admin_all_sources():
+    """The "richer" admin dashboard: every source regardless of status,
+    with Activate/Reject/Pause/Resume all reachable from one page --
+    admin_pending stays focused on just the pending queue."""
+    try:
+        sources = toolkit.get_action("provider_source_list_all")(_context(), {})
+    except toolkit.NotAuthorized:
+        return toolkit.abort(403)
+    return toolkit.render(
+        "providerharvest/admin_all_sources.html", extra_vars={"sources": sources}
+    )
+
+
+def source_pause(harvest_source_id):
+    return _source_pause_or_resume("provider_source_pause", harvest_source_id, "paused")
+
+
+def source_resume(harvest_source_id):
+    return _source_pause_or_resume("provider_source_resume", harvest_source_id, "resumed")
+
+
+def _source_pause_or_resume(action_name: str, harvest_source_id: str, past_tense: str):
+    if not toolkit.g.user:
+        return toolkit.redirect_to("user.login")
+    # Self-service (org admins) and the sysadmin admin dashboard both
+    # link to these same two routes -- redirect back to wherever the
+    # request actually came from rather than hardcoding one destination.
+    referrer = flask.request.form.get("came_from") or toolkit.h.url_for(
+        "providerharvest.source_list"
+    )
+    try:
+        toolkit.get_action(action_name)(_context(), {"harvest_source_id": harvest_source_id})
+    except toolkit.NotAuthorized:
+        return toolkit.abort(403)
+    except toolkit.ObjectNotFound:
+        return toolkit.abort(404)
+    except toolkit.ValidationError as exc:
+        toolkit.h.flash_error(str(exc))
+        return toolkit.redirect_to(referrer)
+    toolkit.h.flash_success(toolkit._("Source %s.") % past_tense)
+    return toolkit.redirect_to(referrer)
+
+
 providerharvest.add_url_rule("/sources", view_func=source_list, methods=["GET"])
 providerharvest.add_url_rule("/sources/new", view_func=new_source, methods=["GET", "POST"])
 providerharvest.add_url_rule(
@@ -363,9 +459,21 @@ providerharvest.add_url_rule(
 providerharvest.add_url_rule(
     "/sources/fetch-host-key", view_func=fetch_host_key, methods=["POST"]
 )
+providerharvest.add_url_rule(
+    "/sources/<harvest_source_id>/pause", view_func=source_pause, methods=["POST"]
+)
+providerharvest.add_url_rule(
+    "/sources/<harvest_source_id>/resume", view_func=source_resume, methods=["POST"]
+)
 providerharvest.add_url_rule("/admin/pending", view_func=admin_pending, methods=["GET"])
 providerharvest.add_url_rule(
     "/admin/sources/<harvest_source_id>/activate",
     view_func=admin_activate,
     methods=["POST"],
 )
+providerharvest.add_url_rule(
+    "/admin/sources/<harvest_source_id>/reject",
+    view_func=admin_reject,
+    methods=["POST"],
+)
+providerharvest.add_url_rule("/admin/sources", view_func=admin_all_sources, methods=["GET"])

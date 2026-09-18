@@ -143,12 +143,23 @@ def provider_source_list_mine(context, data_dict):
         .filter(Package.owner_org.in_(org_ids))
         .all()
     )
-    return [
-        toolkit.get_action("harvest_source_show")(
+    results = []
+    for pkg in packages:
+        harvest_source = toolkit.get_action("harvest_source_show")(
             {**context, "ignore_auth": True}, {"id": pkg.id}
         )
-        for pkg in packages
-    ]
+        # provider_status/rejection_reason live on our own extension
+        # row, not anything ckanext-harvest's harvest_source_show
+        # returns -- without merging them in here, the provider's own
+        # source list has no way to show "pending"/"paused"/"rejected"
+        # (why it was registered) at all.
+        provider_source = provider_source_model.get_by_harvest_source_id(pkg.id)
+        harvest_source["provider_status"] = provider_source.status if provider_source else None
+        harvest_source["rejection_reason"] = (
+            provider_source.rejection_reason if provider_source else None
+        )
+        results.append(harvest_source)
+    return results
 
 
 def provider_source_test_connection(context, data_dict):
@@ -444,6 +455,112 @@ def provider_source_activate(context, data_dict):
     Session.commit()
 
     return {"harvest_source_id": harvest_source_id, "status": "active"}
+
+
+def provider_source_reject(context, data_dict):
+    """data.gov.gr admin action: denies a pending source -- the
+    counterpart to provider_source_activate. Provisions nothing (nothing
+    was ever approved); the optional 'reason' is shown back to the
+    provider on their own source list (see provider_source_list_mine)
+    so a denial isn't a silent dead end."""
+    toolkit.check_access("provider_source_reject", context, data_dict)
+
+    harvest_source_id = data_dict["harvest_source_id"]
+    provider_source = provider_source_model.get_by_harvest_source_id(harvest_source_id)
+    if provider_source is None:
+        raise toolkit.ObjectNotFound("No provider source for %r" % harvest_source_id)
+    if provider_source.status != "pending":
+        raise toolkit.ValidationError(
+            "Only a pending source can be rejected (current status: %r)" % provider_source.status
+        )
+
+    provider_source.status = "rejected"
+    provider_source.rejection_reason = (data_dict.get("reason") or "").strip() or None
+
+    from ckan.model.meta import Session
+    Session.commit()
+
+    return {"harvest_source_id": harvest_source_id, "status": "rejected"}
+
+
+def provider_source_pause(context, data_dict):
+    """Temporarily stops an active source from running without touching
+    its package/resource/config -- gather_stage already skips any source
+    whose status isn't 'active', so pausing is just that one flag flip.
+    Self-service (the owning org's admins) or a sysadmin (via CKAN's own
+    check_access short-circuit) -- see logic/auth.py."""
+    toolkit.check_access("provider_source_pause", context, data_dict)
+
+    harvest_source_id = data_dict["harvest_source_id"]
+    provider_source = provider_source_model.get_by_harvest_source_id(harvest_source_id)
+    if provider_source is None:
+        raise toolkit.ObjectNotFound("No provider source for %r" % harvest_source_id)
+    if provider_source.status != "active":
+        raise toolkit.ValidationError(
+            "Only an active source can be paused (current status: %r)" % provider_source.status
+        )
+
+    provider_source.status = "paused"
+
+    from ckan.model.meta import Session
+    Session.commit()
+
+    return {"harvest_source_id": harvest_source_id, "status": "paused"}
+
+
+def provider_source_resume(context, data_dict):
+    """The counterpart to provider_source_pause -- flips a paused source
+    back to active. Not provider_source_activate: the package/resource
+    already exist from the original approval, re-provisioning them would
+    just collide on the existing names."""
+    toolkit.check_access("provider_source_resume", context, data_dict)
+
+    harvest_source_id = data_dict["harvest_source_id"]
+    provider_source = provider_source_model.get_by_harvest_source_id(harvest_source_id)
+    if provider_source is None:
+        raise toolkit.ObjectNotFound("No provider source for %r" % harvest_source_id)
+    if provider_source.status != "paused":
+        raise toolkit.ValidationError(
+            "Only a paused source can be resumed (current status: %r)" % provider_source.status
+        )
+
+    provider_source.status = "active"
+
+    from ckan.model.meta import Session
+    Session.commit()
+
+    return {"harvest_source_id": harvest_source_id, "status": "active"}
+
+
+@toolkit.side_effect_free
+def provider_source_list_all(context, data_dict):
+    """Sysadmin admin dashboard: every source regardless of status,
+    across all orgs -- the "richer" counterpart to
+    provider_source_list_pending's single-status queue, so pause/resume/
+    reject are all reachable from one place."""
+    toolkit.check_access("provider_source_list_all", context, data_dict)
+    sources = provider_source_model.list_all()
+    results = []
+    for provider_source in sources:
+        try:
+            harvest_source = toolkit.get_action("harvest_source_show")(
+                {**context, "ignore_auth": True}, {"id": provider_source.harvest_source_id}
+            )
+        except toolkit.ObjectNotFound:
+            continue
+        results.append({
+            "harvest_source_id": provider_source.harvest_source_id,
+            "name": harvest_source["name"],
+            "title": harvest_source.get("title") or harvest_source["name"],
+            "url": harvest_source["url"],
+            "owner_org": provider_source.owner_org,
+            "organization_title": (harvest_source.get("organization") or {}).get("title"),
+            "status": provider_source.status,
+            "rejection_reason": provider_source.rejection_reason,
+            "created": provider_source.created,
+            "notification_email": provider_source.notification_email,
+        })
+    return results
 
 
 def ensure_provider_resource(context, harvest_source: dict, profile: FieldMappingProfile,
