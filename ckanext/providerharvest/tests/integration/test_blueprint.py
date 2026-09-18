@@ -524,7 +524,7 @@ class TestProviderUIBlueprint:
         )
         created = helpers.call_action(
             "provider_source_create", {"user": editor["name"], "ignore_auth": False},
-            name="ui-pause-source", owner_org=org["id"],
+            name="ui-pause-source", title="UI Pause Source", owner_org=org["id"],
             endpoint_url="https://provider.example.com/api/records",
             transport_type="http", auth_type="api_key",
             credential_fields={"api_key": "test-key"},
@@ -535,7 +535,10 @@ class TestProviderUIBlueprint:
             pagination={"style": "page_number", "items_path": "results"},
             frequency="MANUAL",
             dataset_defaults={
-                "title_translated": {"en": "UI Pause Source"},
+                # NOT what admin_all_sources.html shows -- that's the
+                # harvest source's own title (title= above), not the
+                # dataset ensure_provider_resource creates on approval.
+                "title_translated": {"en": "UI Pause Dataset"},
                 "notes_translated": {"en": "For the pause/resume-route smoke test."},
             },
         )
