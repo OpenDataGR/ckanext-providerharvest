@@ -90,7 +90,15 @@ class GenericProviderHarvester(HarvesterBase):
         if transport_type == "http":
             required.append("pagination")
         elif transport_type == "sftp":
-            required += ["host", "remote_path", "host_key_fingerprint"]
+            # NOT host_key_fingerprint: that's per-source trust state,
+            # stored on ProviderSourceExtension.host_key_fingerprint (see
+            # provider_source_create) and read from there by
+            # _build_transport -- it deliberately never goes into this
+            # config blob at all, so requiring it here would reject
+            # every real SFTP source at creation time (confirmed: this
+            # broke the SFTP integration test's very first
+            # harvest_source_create call).
+            required += ["host", "remote_path"]
         missing = [key for key in required if key not in data]
         if missing:
             raise toolkit.ValidationError("Config missing required keys: %s" % missing)
