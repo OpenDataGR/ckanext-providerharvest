@@ -10,6 +10,18 @@ setup(
         "through DataStore's consumer query API."
     ),
     packages=find_namespace_packages(include=["ckanext*"]),
+    # Non-.py files aren't picked up by `packages=` alone -- irrelevant
+    # for this project's own install path (`pip install -e .`, an
+    # editable install that reads straight from the checkout, no
+    # copying), but a real `pip install` from a built wheel needs these
+    # listed explicitly or it silently ships an extension with no
+    # templates and a migration directory missing its non-Python files
+    # (alembic.ini, script.py.mako) -- `ckan db upgrade -p
+    # providerharvest` would then fail to find them at all.
+    package_data={
+        "ckanext.providerharvest.templates.providerharvest": ["*.html"],
+        "ckanext.providerharvest.migration.providerharvest": ["*.ini", "*.mako"],
+    },
     install_requires=[
         # ckanext-harvest, ckanext-datastore, and ckanext-xloader are
         # already installed/enabled on data.gov.gr (confirmed via

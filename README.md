@@ -161,8 +161,12 @@ Wait for `ckan` to report healthy (`docker compose ps`), then verify:
 - **Plugins enabled**: `curl http://localhost:5000/api/3/action/status_show`
   should list `harvest`, `datastore`, `xloader`, `scheming_datasets`,
   `dcat`, `fluent`, and `providerharvest` under `extensions`.
-- **This extension's tables exist** (created automatically via
-  `model.meta.init_tables()`, called from `IConfigurable.configure`):
+- **This extension's tables exist** (created by a real Alembic migration --
+  `migration/providerharvest/` -- applied via `ckan db upgrade -p
+  providerharvest`; the base `ckan/ckan-base` image's own `prerun.py` runs
+  plain `ckan db init`, which is an alias for `ckan db upgrade` and applies
+  *every* enabled plugin's pending migrations automatically, so this
+  replica needs no extra step for it):
 
   ```bash
   docker compose exec db psql -U postgres -d ckandb -c '\dt providerharvest_*'
@@ -175,9 +179,10 @@ Wait for `ckan` to report healthy (`docker compose ps`), then verify:
   plugins at process start, before it serves any requests -- so the
   `status_show` check above only succeeding at all (and the `ckan`
   container's healthcheck going green) already proves
-  `ckanext.providerharvest` imported and `configure()` ran cleanly. To
-  double-check directly, `docker compose logs ckan` during startup
-  should show no traceback mentioning `ckanext.providerharvest`.
+  `ckanext.providerharvest` imported cleanly. To double-check directly,
+  `docker compose logs ckan` during startup should show no traceback
+  mentioning `ckanext.providerharvest`, and `ckan db init`'s own output
+  should mention applying `providerharvest`'s migration.
 
 CKAN's admin UI/API is at `http://localhost:5000` (sysadmin login from
 `CKAN_SYSADMIN_NAME`/`CKAN_SYSADMIN_PASSWORD` in `.env`). Solr is
@@ -259,5 +264,19 @@ harvest-job scenario above too.
    e.g. `python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`)
    in the environment CKAN runs under -- **outside** `ckan.ini` and outside
    the CKAN database.
-4. Restart CKAN. The extension's tables are created automatically on
-   startup (`model.meta.init_tables()`, called from `IConfigurable.configure`).
+4. Apply this extension's database migration:
+   `ckan -c /path/to/ckan.ini db upgrade -p providerharvest`. (Plain
+   `ckan db upgrade`, with no `-p`, also picks this up automatically
+   alongside core and every other enabled plugin's pending migrations --
+   the base `ckan/ckan-base` Docker image's own startup script already
+   calls the equivalent `ckan db init` on every boot, which is why this
+   replica needs no extra step for it; a bare-metal/VM install has no
+   such script and needs this run explicitly, typically as a deploy-time
+   step alongside the plugin-list change above, not a one-off.)
+5. Restart CKAN.
+
+There is no `IConfigurable.configure()`-driven auto-create anymore (a
+prior version of this extension had one) -- see
+`migration/providerharvest/`'s baseline revision for the schema this
+applies, and `ckan db version -p providerharvest` / `ckan db
+pending-migrations` to check status without applying anything.

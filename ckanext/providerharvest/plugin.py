@@ -8,7 +8,6 @@ from ckanext.providerharvest.harvesters.base_generic import GenericProviderHarve
 
 
 class ProviderHarvestPlugin(plugins.SingletonPlugin):
-    plugins.implements(plugins.IConfigurable)
     plugins.implements(plugins.IConfigurer)
     plugins.implements(plugins.IActions)
     plugins.implements(plugins.IAuthFunctions)
@@ -20,11 +19,15 @@ class ProviderHarvestPlugin(plugins.SingletonPlugin):
     except ImportError:  # pragma: no cover - ckanext-harvest not installed
         pass
 
-    # -- IConfigurable ------------------------------------------------
-
-    def configure(self, config):
-        from ckanext.providerharvest.model.meta import init_tables
-        init_tables()
+    # No IConfigurable/configure() -- this extension's tables are created
+    # by a real Alembic migration now (migration/providerharvest/), not a
+    # metadata.create_all() call at plugin-load time. `ckan db init`/`ckan
+    # db upgrade -p providerharvest` applies it; CKAN's own ckan-base
+    # Docker image already runs `ckan db init` (which applies every
+    # enabled plugin's pending migrations, not just core's) as part of
+    # normal container startup, so this needs no extra step in this
+    # project's own Docker replica -- see README.md's install
+    # instructions for a real, non-Docker deployment.
 
     # -- IConfigurer --------------------------------------------------
 

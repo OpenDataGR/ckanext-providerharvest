@@ -1,7 +1,15 @@
-"""Table definitions for this extension, following the same pattern
-ckanext-harvest itself uses (plain SQLAlchemy Core tables bound to CKAN's
-metadata, created via an idempotent ``init_tables()`` called from the
-plugin's setup).
+"""Table definitions for this extension -- plain SQLAlchemy Core tables
+bound to CKAN's shared metadata, mapped imperatively by each model
+module (``provider_source.py`` etc.) for ORM-style querying.
+
+Schema *creation* is a real Alembic migration now
+(``migration/providerharvest/``, applied via ``ckan db upgrade -p
+providerharvest``), not a ``metadata.create_all()`` call from this
+module -- see that migration's own baseline revision docstring for why
+the switch, and ``plugin.py``'s comment for why there's no
+``IConfigurable.configure()`` anymore. ``init_tables()`` below still
+exists as a plain idempotent helper (the integration tests' conftest.py
+uses it as a safety net), it's just no longer wired into plugin load.
 """
 
 from __future__ import annotations
@@ -81,15 +89,16 @@ outbound_request_log_table = sa.Table(
 
 
 def init_tables() -> None:
-    """Idempotently create this extension's tables. Called from
-    ``plugin.py``'s configure/update_config, same pattern ckanext-harvest
-    itself uses for its own model.
+    """Idempotently create this extension's tables directly from these
+    ``sa.Table`` definitions, bypassing Alembic entirely. NOT the real
+    schema-creation path anymore (see module docstring) -- kept only as
+    a plain best-effort helper for tests that want a safety net without
+    depending on migrations having been run in whatever environment
+    they execute in.
 
     ``metadata.bind`` is never set on CKAN 2.11's SQLAlchemy 1.4+ engine
     setup (``MetaData.bind`` is legacy/deprecated there), so use the
     engine actually bound to CKAN's own scoped Session instead -- the
-    same source ckanext-harvest's own ``model.setup()`` draws from, and
-    reliably already configured by the time a plugin's ``configure()``
-    runs during CKAN's environment/plugin load.
+    same source ckanext-harvest's own ``model.setup()`` draws from.
     """
     metadata.create_all(bind=Session.get_bind(), checkfirst=True)
