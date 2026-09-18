@@ -78,3 +78,9 @@ def provider_source_activate(context: dict, data_dict: dict) -> dict:
     already short-circuits to allow sysadmins before this function is
     ever called, which is what makes it reachable at all."""
     return {"success": False}
+
+
+def provider_source_list_pending(context: dict, data_dict: dict) -> dict:
+    """Same reasoning as provider_source_activate: the approval queue is
+    sysadmin-only, not org-scoped."""
+    return {"success": False}

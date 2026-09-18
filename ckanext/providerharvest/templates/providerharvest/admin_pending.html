@@ -1,0 +1,43 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ _("Pending provider sources") }}{% endblock %}
+
+{% block primary_content %}
+  <div class="module">
+    <div class="module-content">
+      <h1>{{ _("Pending provider sources") }}</h1>
+      <p class="info-block">{{ _("Approving a source lets it start pulling data from a provider-controlled endpoint on a schedule. Review the endpoint before activating.") }}</p>
+
+      {% if pending %}
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>{{ _("Source") }}</th>
+              <th>{{ _("Organization") }}</th>
+              <th>{{ _("Endpoint") }}</th>
+              <th>{{ _("Registered") }}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for source in pending %}
+              <tr>
+                <td>{{ source.title }}</td>
+                <td>{{ source.organization_title }}</td>
+                <td><code>{{ source.url }}</code></td>
+                <td>{{ source.created }}</td>
+                <td>
+                  <form method="post" action="{{ h.url_for('providerharvest.admin_activate', harvest_source_id=source.harvest_source_id) }}">
+                    <button type="submit" class="btn btn-primary btn-sm">{{ _("Activate") }}</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="empty">{{ _("No provider sources are awaiting approval.") }}</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

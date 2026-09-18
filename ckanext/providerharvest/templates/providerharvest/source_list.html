@@ -1,0 +1,37 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ _("My provider sources") }}{% endblock %}
+
+{% block primary_content %}
+  <div class="module">
+    <div class="module-content">
+      <div class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h1>{{ _("My provider sources") }}</h1>
+        <a class="btn btn-primary" href="{{ h.url_for('providerharvest.new_source') }}">{{ _("Register a new source") }}</a>
+      </div>
+
+      {% if sources %}
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>{{ _("Name") }}</th>
+              <th>{{ _("Endpoint") }}</th>
+              <th>{{ _("Frequency") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for source in sources %}
+              <tr>
+                <td>{{ source.title or source.name }}</td>
+                <td><code>{{ source.url }}</code></td>
+                <td>{{ source.frequency }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="empty">{{ _("You haven't registered any provider sources yet.") }}</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,158 @@
+{% extends "page.html" %}
+
+{% block subtitle %}{{ _("Register a provider source") }}{% endblock %}
+
+{% block primary_content %}
+  <div class="module">
+    <div class="module-content">
+      <h1>{{ _("Register a provider source") }}</h1>
+
+      {% if errors %}
+        <div class="alert alert-error">
+          <strong>{{ _("Please fix the following:") }}</strong>
+          <ul>
+            {% for field, msgs in errors.items() %}
+              <li>{{ field }}: {{ msgs|join(", ") }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      <form method="post" action="{{ h.url_for('providerharvest.new_source') }}">
+        <fieldset>
+          <legend>{{ _("Basics") }}</legend>
+          <div class="form-group">
+            <label for="field-name">{{ _("Name (URL-safe identifier)") }}</label>
+            <input id="field-name" name="name" type="text" class="form-control" required value="{{ data.get('name', '') }}">
+          </div>
+          <div class="form-group">
+            <label for="field-title">{{ _("Title") }}</label>
+            <input id="field-title" name="title" type="text" class="form-control" value="{{ data.get('title', '') }}">
+          </div>
+          <div class="form-group">
+            <label for="field-owner_org">{{ _("Organization") }}</label>
+            <select id="field-owner_org" name="owner_org" class="form-control" required>
+              {% for org in orgs %}
+                <option value="{{ org.id }}" {{ "selected" if data.get('owner_org') == org.id else "" }}>{{ org.display_name or org.title or org.name }}</option>
+              {% endfor %}
+            </select>
+            {% if not orgs %}
+              <span class="info-block">{{ _("You need editor rights on an organization to register a source. Ask a sysadmin to add you to one.") }}</span>
+            {% endif %}
+          </div>
+          <div class="form-group">
+            <label for="field-endpoint_url">{{ _("Endpoint URL") }}</label>
+            <input id="field-endpoint_url" name="endpoint_url" type="url" class="form-control" required value="{{ data.get('endpoint_url', '') }}" placeholder="https://provider.example.com/api/records">
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>{{ _("Authentication (API key)") }}</legend>
+          <div class="form-group">
+            <label for="field-api_key">{{ _("API key") }}</label>
+            <input id="field-api_key" name="api_key" type="password" class="form-control" autocomplete="new-password">
+            <span class="info-block">{{ _("Stored encrypted, never shown again. Leave blank only if this endpoint truly needs no key.") }}</span>
+          </div>
+          <div class="form-group">
+            <label for="field-api_key_location">{{ _("Send the key as") }}</label>
+            <select id="field-api_key_location" name="api_key_location" class="form-control">
+              <option value="header">{{ _("HTTP header") }}</option>
+              <option value="query">{{ _("Query parameter") }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="field-api_key_name">{{ _("Header / parameter name") }}</label>
+            <input id="field-api_key_name" name="api_key_name" type="text" class="form-control" value="{{ data.get('api_key_name', 'X-API-Key') }}">
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>{{ _("Pagination") }}</legend>
+          <div class="form-group">
+            <label for="field-pagination_style">{{ _("Style") }}</label>
+            <select id="field-pagination_style" name="pagination_style" class="form-control">
+              <option value="page_number">{{ _("Page number") }}</option>
+              <option value="cursor">{{ _("Cursor / next-link") }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="field-items_path">{{ _("Path to the records array in the response") }}</label>
+            <input id="field-items_path" name="items_path" type="text" class="form-control" value="{{ data.get('items_path', 'results') }}" placeholder="results">
+          </div>
+          <div class="form-group">
+            <label for="field-page_param">{{ _("Page parameter name") }}</label>
+            <input id="field-page_param" name="page_param" type="text" class="form-control" value="{{ data.get('page_param', 'page') }}">
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>{{ _("Field mapping") }}</legend>
+          <p class="info-block">{{ _("Map each provider field (a JSONPath into one record) to a DataStore column. Exactly one field must be marked as the primary key.") }}</p>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{ _("DataStore column") }}</th>
+                <th>{{ _("Source path") }}</th>
+                <th>{{ _("Type") }}</th>
+                <th>{{ _("Transform") }}</th>
+                <th>{{ _("Primary key") }}</th>
+                <th>{{ _("Required") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for i in row_rule_slots %}
+                <tr>
+                  <td><input name="row_rules-{{ i }}-ckan_field" type="text" class="form-control"></td>
+                  <td><input name="row_rules-{{ i }}-source_path" type="text" class="form-control" placeholder="e.g. id or data.id"></td>
+                  <td>
+                    <select name="row_rules-{{ i }}-field_type" class="form-control">
+                      {% for ft in field_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}
+                    </select>
+                  </td>
+                  <td>
+                    <select name="row_rules-{{ i }}-transform" class="form-control">
+                      {% for t in transforms %}<option value="{{ t }}">{{ t or _("none") }}</option>{% endfor %}
+                    </select>
+                  </td>
+                  <td><input name="row_rules-{{ i }}-is_primary_key" type="checkbox"></td>
+                  <td><input name="row_rules-{{ i }}-required" type="checkbox"></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </fieldset>
+
+        <fieldset>
+          <legend>{{ _("Dataset metadata") }}</legend>
+          <div class="form-group">
+            <label for="field-dataset_title">{{ _("Dataset title (English)") }}</label>
+            <input id="field-dataset_title" name="dataset_title" type="text" class="form-control" required value="{{ data.get('dataset_title', '') }}">
+          </div>
+          <div class="form-group">
+            <label for="field-dataset_notes">{{ _("Dataset description (English)") }}</label>
+            <textarea id="field-dataset_notes" name="dataset_notes" class="form-control">{{ data.get('dataset_notes', '') }}</textarea>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>{{ _("Scheduling & notifications") }}</legend>
+          <div class="form-group">
+            <label for="field-frequency">{{ _("Pull frequency") }}</label>
+            <select id="field-frequency" name="frequency" class="form-control">
+              {% for f in frequencies %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="field-notification_email">{{ _("Notify this email on repeated failures") }}</label>
+            <input id="field-notification_email" name="notification_email" type="email" class="form-control" value="{{ data.get('notification_email', '') }}">
+          </div>
+        </fieldset>
+
+        <div class="form-actions">
+          <button type="submit" formaction="{{ h.url_for('providerharvest.test_connection') }}" class="btn btn-default">{{ _("Test connection") }}</button>
+          <button type="submit" class="btn btn-primary">{{ _("Register source") }}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

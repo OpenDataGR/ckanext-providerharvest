@@ -201,6 +201,35 @@ def provider_source_create(context, data_dict):
     }
 
 
+@toolkit.side_effect_free
+def provider_source_list_pending(context, data_dict):
+    """Sysadmin approval queue: every source awaiting activation, across
+    all orgs -- deliberately not org-scoped, unlike
+    provider_source_list_mine, since approving sources is a data.gov.gr
+    admin responsibility, not something an org does for itself."""
+    toolkit.check_access("provider_source_list_pending", context, data_dict)
+    pending = provider_source_model.list_by_status("pending")
+    results = []
+    for provider_source in pending:
+        try:
+            harvest_source = toolkit.get_action("harvest_source_show")(
+                {**context, "ignore_auth": True}, {"id": provider_source.harvest_source_id}
+            )
+        except toolkit.ObjectNotFound:
+            continue
+        results.append({
+            "harvest_source_id": provider_source.harvest_source_id,
+            "name": harvest_source["name"],
+            "title": harvest_source.get("title") or harvest_source["name"],
+            "url": harvest_source["url"],
+            "owner_org": provider_source.owner_org,
+            "organization_title": (harvest_source.get("organization") or {}).get("title"),
+            "created": provider_source.created,
+            "notification_email": provider_source.notification_email,
+        })
+    return results
+
+
 def provider_source_activate(context, data_dict):
     """data.gov.gr admin action: approves a pending source, provisioning
     its CKAN package + DataStore-backed resource, then flips it to

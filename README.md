@@ -30,10 +30,16 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
   `logic/auth.py` rather than requiring CKAN sysadmin rights.
 - Job-failure email notifications to the provider's registered contact
   after repeated consecutive failures (`notifications.py`).
+- Self-service web UI (`blueprints/provider_ui.py`, Phase 2): a
+  form-driven flow at `/provider-harvest/sources` (list) and
+  `/provider-harvest/sources/new` (register + test-connection preview),
+  plus a sysadmin approval queue at `/provider-harvest/admin/pending`.
+  Field-mapping rows are plain repeatable form fields for now, not a
+  dynamic JS editor -- see the blueprint's module docstring.
 
-**Not yet built:** the self-service web UI/blueprint (actions above are
-callable via CKAN's API today, no forms yet), SFTP/SCP/FTP transports,
-Basic/OAuth2/mTLS auth, and the broker/relay transport.
+**Not yet built:** SFTP/SCP/FTP transports, Basic/OAuth2/mTLS auth, and
+the broker/relay transport (Phase 1.5); a real dynamic field-mapping
+editor and richer approval-workflow UI (Phase 2 follow-ons).
 
 ## Development
 

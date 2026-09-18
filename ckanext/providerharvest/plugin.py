@@ -9,8 +9,10 @@ from ckanext.providerharvest.harvesters.base_generic import GenericProviderHarve
 
 class ProviderHarvestPlugin(plugins.SingletonPlugin):
     plugins.implements(plugins.IConfigurable)
+    plugins.implements(plugins.IConfigurer)
     plugins.implements(plugins.IActions)
     plugins.implements(plugins.IAuthFunctions)
+    plugins.implements(plugins.IBlueprint)
 
     try:
         from ckanext.harvest.interfaces import IHarvester
@@ -24,12 +26,18 @@ class ProviderHarvestPlugin(plugins.SingletonPlugin):
         from ckanext.providerharvest.model.meta import init_tables
         init_tables()
 
+    # -- IConfigurer --------------------------------------------------
+
+    def update_config(self, config):
+        toolkit.add_template_directory(config, "templates")
+
     # -- IActions -------------------------------------------------------
 
     def get_actions(self):
         return {
             "provider_source_create": action.provider_source_create,
             "provider_source_list_mine": action.provider_source_list_mine,
+            "provider_source_list_pending": action.provider_source_list_pending,
             "provider_source_test_connection": action.provider_source_test_connection,
             "provider_source_activate": action.provider_source_activate,
         }
@@ -43,9 +51,16 @@ class ProviderHarvestPlugin(plugins.SingletonPlugin):
             "provider_source_update": auth.provider_source_update,
             "provider_source_delete": auth.provider_source_delete,
             "provider_source_list_mine": auth.provider_source_list_mine,
+            "provider_source_list_pending": auth.provider_source_list_pending,
             "provider_source_test_connection": auth.provider_source_test_connection,
             "provider_source_activate": auth.provider_source_activate,
         }
+
+    # -- IBlueprint ---------------------------------------------------
+
+    def get_blueprint(self):
+        from ckanext.providerharvest.blueprints.provider_ui import providerharvest
+        return providerharvest
 
     # -- IHarvester -------------------------------------------------------
     # ckanext-harvest discovers harvesters via a plugin implementing

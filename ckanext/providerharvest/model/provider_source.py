@@ -30,6 +30,19 @@ def get_by_harvest_source_id(harvest_source_id: str) -> ProviderSourceExtension 
     )
 
 
+def list_by_status(status: str) -> list[ProviderSourceExtension]:
+    """Across all orgs -- used by the sysadmin approval queue, which by
+    definition needs to see pending sources regardless of which org they
+    belong to (unlike provider_source_list_mine, which is deliberately
+    scoped to the calling user's own orgs)."""
+    return (
+        Session.query(ProviderSourceExtension)
+        .filter_by(status=status)
+        .order_by(ProviderSourceExtension.created)
+        .all()
+    )
+
+
 def create(**kwargs) -> ProviderSourceExtension:
     obj = ProviderSourceExtension(**kwargs)
     Session.add(obj)
