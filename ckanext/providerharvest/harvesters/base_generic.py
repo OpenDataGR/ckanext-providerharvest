@@ -30,13 +30,15 @@ from ckanext.providerharvest.loaders.datastore_loader import DataStoreLoader
 from ckanext.providerharvest.mapping import FieldMappingError
 from ckanext.providerharvest.model import audit_log as audit_log_model
 from ckanext.providerharvest.model import field_mapping as field_mapping_model
+from ckanext.providerharvest.loaders.file_resource_loader import FileResourceLoader
 from ckanext.providerharvest.model import provider_source as provider_source_model
 from ckanext.providerharvest.parsers.json_records import JSONRecordsParser
 from ckanext.providerharvest.secrets.base import SecretsBackend
 from ckanext.providerharvest.secrets.envelope import EnvelopeSecretsBackend
 from ckanext.providerharvest.model.secret import SqlAlchemySecretRepository
-from ckanext.providerharvest.transport.base import Transport
+from ckanext.providerharvest.transport.base import Entry, Transport
 from ckanext.providerharvest.transport.direct_https import DirectHTTPSTransport
+from ckanext.providerharvest.transport.sftp import SFTPTransport
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +85,12 @@ class GenericProviderHarvester(HarvesterBase):
         except ValueError as exc:
             raise toolkit.ValidationError("Config must be valid JSON: %s" % exc) from exc
 
-        required = ["transport_type", "auth_type", "secret_ref", "pagination"]
+        required = ["transport_type", "auth_type", "secret_ref"]
+        transport_type = data.get("transport_type")
+        if transport_type == "http":
+            required.append("pagination")
+        elif transport_type == "sftp":
+            required += ["host", "remote_path", "host_key_fingerprint"]
         missing = [key for key in required if key not in data]
         if missing:
             raise toolkit.ValidationError("Config missing required keys: %s" % missing)
@@ -97,16 +104,25 @@ class GenericProviderHarvester(HarvesterBase):
                 "store them via the secrets backend and reference by secret_ref" % sorted(leaked)
             )
 
-        if data["transport_type"] != "http":
+        if transport_type not in ("http", "sftp"):
             raise toolkit.ValidationError(
-                "transport_type %r is not yet implemented (Phase 1 supports only 'http')"
-                % data["transport_type"]
+                "transport_type %r is not yet implemented (available: http, sftp)"
+                % transport_type
             )
-        if data.get("delivery_mode", "api_records") != "api_records":
+
+        delivery_mode = data.get("delivery_mode", "api_records")
+        # Each transport currently only supports the one delivery_mode
+        # that actually makes sense for it: an HTTP JSON API yields
+        # per-record data to map into DataStore, an SFTP directory
+        # yields whole files to store as resources -- see DESIGN.md's
+        # Phase 1.5 notes on why these aren't cross-combined (yet).
+        valid_combinations = {"http": "api_records", "sftp": "bulk_file"}
+        if delivery_mode != valid_combinations[transport_type]:
             raise toolkit.ValidationError(
-                "delivery_mode %r is not yet implemented (Phase 1 supports only 'api_records')"
-                % data["delivery_mode"]
+                "delivery_mode %r is not supported for transport_type=%r "
+                "(expected %r)" % (delivery_mode, transport_type, valid_combinations[transport_type])
             )
+        data["delivery_mode"] = delivery_mode
 
         return json.dumps(data)
 
@@ -114,12 +130,17 @@ class GenericProviderHarvester(HarvesterBase):
 
     def _build_transport(self, source, job, config: dict) -> Transport:
         secret = self._secrets_backend.get(config["secret_ref"])
-        auth_strategy = _build_auth_strategy(config["auth_type"])
 
         def on_request(event: OutboundRequestEvent) -> None:
             audit_log_model.record_event(event)
 
         if config["transport_type"] == "http":
+            # auth_type/AuthStrategy is an HTTP-specific concept (how to
+            # attach credentials to a request) -- SSH auth (password vs.
+            # private key) is decided from the secret's own shape inside
+            # SFTPTransport instead, see its module docstring, so this
+            # is deliberately not called for transport_type=sftp below.
+            auth_strategy = _build_auth_strategy(config["auth_type"])
             return DirectHTTPSTransport(
                 base_url=source.url,
                 auth_strategy=auth_strategy,
@@ -128,6 +149,26 @@ class GenericProviderHarvester(HarvesterBase):
                 auth_opts=config.get("auth_opts"),
                 ca_bundle_path=config.get("ca_bundle_path"),
                 max_requests_per_minute=config.get("max_requests_per_minute", 60),
+                allow_private_ranges=config.get("allow_private_ranges", False),
+                on_request=on_request,
+                harvest_source_id=source.id,
+                harvest_job_id=job.id,
+            )
+        if config["transport_type"] == "sftp":
+            provider_source = provider_source_model.get_by_harvest_source_id(source.id)
+            return SFTPTransport(
+                config["host"],
+                secret=secret,
+                port=config.get("port", 22),
+                remote_path=config["remote_path"],
+                glob_pattern=config.get("glob_pattern", "*"),
+                # Pinned at registration time via provider_source_create's
+                # host_key_fingerprint field (see
+                # provider_source_fetch_host_key) -- not config, since
+                # it's per-source trust state, not transport behaviour.
+                pinned_host_key_fingerprint=(
+                    provider_source.host_key_fingerprint if provider_source else None
+                ),
                 allow_private_ranges=config.get("allow_private_ranges", False),
                 on_request=on_request,
                 harvest_source_id=source.id,
@@ -165,6 +206,7 @@ class GenericProviderHarvester(HarvesterBase):
             self._record_failure_and_maybe_notify(source, "network_target_rejected", str(exc))
             return []
 
+        bulk_file = config.get("delivery_mode") == "bulk_file"
         object_ids = []
         try:
             with transport:
@@ -172,11 +214,17 @@ class GenericProviderHarvester(HarvesterBase):
                 while True:
                     page = transport.list_entries(cursor)
                     for entry in page.entries:
-                        obj = HarvestObject(
-                            guid=entry.ref,
-                            job=harvest_job,
-                            content=entry.inline_data.decode("utf-8") if entry.inline_data else None,
-                        )
+                        if bulk_file:
+                            # Never the file bytes here -- provider
+                            # exports can be multi-GB, and gather_stage
+                            # may run in a different process/lifetime
+                            # than import_stage. Only the pointer
+                            # (remote ref + mtime/size) is persisted;
+                            # import_stage re-opens the file itself.
+                            content = json.dumps({"ref": entry.ref, "metadata": entry.metadata})
+                        else:
+                            content = entry.inline_data.decode("utf-8") if entry.inline_data else None
+                        obj = HarvestObject(guid=entry.ref, job=harvest_job, content=content)
                         obj.save()
                         object_ids.append(obj.id)
                     if not page.next_cursor:
@@ -198,6 +246,12 @@ class GenericProviderHarvester(HarvesterBase):
 
     def import_stage(self, harvest_object):
         source = harvest_object.job.source
+        config = json.loads(source.config)
+        if config.get("delivery_mode") == "bulk_file":
+            return self._import_bulk_file(harvest_object, source, config)
+        return self._import_api_record(harvest_object, source)
+
+    def _import_api_record(self, harvest_object, source):
         try:
             record = JSONRecordsParser().parse(
                 io.BytesIO(harvest_object.content.encode("utf-8"))
@@ -216,17 +270,7 @@ class GenericProviderHarvester(HarvesterBase):
             self._record_failure_and_maybe_notify(source, "mapping_error", str(exc))
             return False
 
-        # Not {"model": None, "session": None, ...}: ckanext-datastore's
-        # own actions (datastore_create/datastore_upsert) dereference
-        # context['model'] directly (e.g. for resource lookups) --
-        # passing None instead of the real ckan.model module fails with
-        # "'NoneType' object has no attribute 'query'" the moment a real
-        # DataStore write is attempted, confirmed by actually running a
-        # harvest job for the first time.
-        context = {
-            "model": ckan_model, "session": ckan_model.Session,
-            "ignore_auth": True, "user": "harvest",
-        }
+        context = self._real_model_context()
         provider_source = provider_source_model.get_by_harvest_source_id(source.id)
         loader = DataStoreLoader(get_action=toolkit.get_action)
 
@@ -256,3 +300,67 @@ class GenericProviderHarvester(HarvesterBase):
         harvest_object.save()
         provider_source_model.record_success(source.id)
         return True
+
+    def _import_bulk_file(self, harvest_object, source, config):
+        try:
+            pointer = json.loads(harvest_object.content)
+            ref, metadata = pointer["ref"], pointer["metadata"]
+        except Exception as exc:  # noqa: BLE001
+            self._save_object_error("Could not parse file pointer: %s" % exc, harvest_object)
+            self._record_failure_and_maybe_notify(source, "mapping_error", str(exc))
+            return False
+
+        context = self._real_model_context()
+        provider_source = provider_source_model.get_by_harvest_source_id(source.id)
+        package_id = provider_source.ckan_package_id if provider_source else None
+        if package_id is None:
+            self._save_object_error(
+                "Source %s has no ckan_package_id -- it must be approved/activated "
+                "before harvesting" % source.id, harvest_object,
+            )
+            self._record_failure_and_maybe_notify(source, "unknown", "not activated")
+            return False
+
+        loader = FileResourceLoader(get_action=toolkit.get_action)
+        try:
+            # A fresh transport/connection per object: gather_stage's own
+            # connection is long closed by the time import_stage runs
+            # (a separate stage, possibly a separate process), and a
+            # remote SFTP directory listing gives no way to keep a
+            # single file handle alive across that boundary anyway.
+            transport = self._build_transport(source, harvest_object.job, config)
+            with transport:
+                handle = transport.open_entry(Entry(ref=ref, metadata=metadata))
+                try:
+                    loader.load_stream(
+                        context, package_id,
+                        filename=ref.rsplit("/", 1)[-1], stream=handle,
+                    )
+                finally:
+                    close = getattr(handle, "close", None)
+                    if close:
+                        close()
+        except Exception as exc:  # noqa: BLE001
+            self._save_object_error("File resource load failed: %s" % exc, harvest_object)
+            self._record_failure_and_maybe_notify(source, "unknown", str(exc))
+            return False
+
+        harvest_object.package_id = package_id
+        harvest_object.current = True
+        harvest_object.save()
+        provider_source_model.record_success(source.id)
+        return True
+
+    @staticmethod
+    def _real_model_context() -> dict:
+        # Not {"model": None, "session": None, ...}: ckanext-datastore's
+        # own actions (datastore_create/datastore_upsert) dereference
+        # context['model'] directly (e.g. for resource lookups), and
+        # resource_create/update dereference it too -- passing None
+        # instead of the real ckan.model module fails with "'NoneType'
+        # object has no attribute 'query'" the moment a real write is
+        # attempted, confirmed by actually running a harvest job.
+        return {
+            "model": ckan_model, "session": ckan_model.Session,
+            "ignore_auth": True, "user": "harvest",
+        }

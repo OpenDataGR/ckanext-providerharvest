@@ -42,6 +42,13 @@ def provider_source_test_connection(context: dict, data_dict: dict) -> dict:
     return provider_source_create(context, data_dict)
 
 
+def provider_source_fetch_host_key(context: dict, data_dict: dict) -> dict:
+    # Same requirement as create/test_connection: part of the same
+    # pre-save registration flow, just narrower (reads a host key, no
+    # provider credentials involved at all).
+    return provider_source_create(context, data_dict)
+
+
 def provider_source_show(context: dict, data_dict: dict) -> dict:
     owner_org = data_dict.get("owner_org")
     if not owner_org:

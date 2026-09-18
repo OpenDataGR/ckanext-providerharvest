@@ -39,6 +39,7 @@ class ProviderHarvestPlugin(plugins.SingletonPlugin):
             "provider_source_list_mine": action.provider_source_list_mine,
             "provider_source_list_pending": action.provider_source_list_pending,
             "provider_source_test_connection": action.provider_source_test_connection,
+            "provider_source_fetch_host_key": action.provider_source_fetch_host_key,
             "provider_source_activate": action.provider_source_activate,
         }
 
@@ -53,6 +54,7 @@ class ProviderHarvestPlugin(plugins.SingletonPlugin):
             "provider_source_list_mine": auth.provider_source_list_mine,
             "provider_source_list_pending": auth.provider_source_list_pending,
             "provider_source_test_connection": auth.provider_source_test_connection,
+            "provider_source_fetch_host_key": auth.provider_source_fetch_host_key,
             "provider_source_activate": auth.provider_source_activate,
         }
 

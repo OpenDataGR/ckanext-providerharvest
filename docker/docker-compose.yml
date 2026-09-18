@@ -111,3 +111,18 @@ services:
       - ./mock-provider/serve.py:/serve.py:ro
     command: ["python3", "/serve.py"]
     restart: unless-stopped
+
+  # Throwaway mock SFTP provider for the Phase 1.5 SFTP/bulk_file
+  # end-to-end test -- a real OpenSSH server with a fixed set of files
+  # under sftp-provider/upload/ (bind-mounted read-only into the sftp
+  # user's chroot), exercising SFTPTransport's real paramiko connect/
+  # host-key/auth/listing path, not a fake. atmoz/sftp requires the
+  # user's home dir to be root-owned for the chroot, but "upload" (a
+  # subdirectory of it) is exempt from that and is what gets mounted.
+  # Not something a real provider registration would ever point at.
+  sftp-provider:
+    image: "atmoz/sftp:${SFTP_PROVIDER_IMAGE_VERSION:-alpine}"
+    volumes:
+      - ./sftp-provider/upload:/home/produser/upload:ro
+    command: ["produser:${SFTP_PROVIDER_PASSWORD:-test-pass}:1001:1001:upload"]
+    restart: unless-stopped

@@ -43,6 +43,15 @@ def test_requires_at_least_one_primary_key():
         ])
 
 
+def test_empty_row_rules_is_allowed_for_bulk_file_sources():
+    # A bulk-file (e.g. SFTP) source has no per-record fields to map --
+    # it streams whole files as resources -- so an empty row_rules list
+    # must NOT trip the "needs a primary key" check above, unlike a
+    # non-empty list with no primary key.
+    profile = FieldMappingProfile(row_rules=[])
+    assert profile.primary_key_fields == []
+
+
 def test_unknown_field_type_raises():
     with pytest.raises(FieldMappingError):
         FieldMappingRule(ckan_field="x", source_path="$.x", field_type="bogus")

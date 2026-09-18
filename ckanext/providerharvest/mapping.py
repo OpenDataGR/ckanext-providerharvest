@@ -82,7 +82,11 @@ class FieldMappingProfile:
     resource_defaults: dict = dataclasses.field(default_factory=dict)
 
     def __post_init__(self):
-        if not self.primary_key_fields:
+        # Empty row_rules is legitimate for a bulk-file source (whole
+        # files are streamed as resources, there's no per-record
+        # extraction) -- only a *non-empty* rule set without a primary
+        # key is the actual error this guards against.
+        if self.row_rules and not self.primary_key_fields:
             raise FieldMappingError(
                 "At least one row_rule must have is_primary_key=True "
                 "(see the 'no stable primary key' fallback policy before "

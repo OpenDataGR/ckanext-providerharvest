@@ -36,16 +36,49 @@ def _pop_nested_fields(data_dict: dict) -> dict:
     """Pull out the list/dict-valued fields navl_validate can't handle as
     opaque values (see schema.py's module docstring), validate the
     required ones are non-empty by hand, and return them separately from
-    what's left to run through navl_validate."""
+    what's left to run through navl_validate.
+
+    ``row_rules`` (the field-mapping rows) is only meaningful for
+    ``delivery_mode="api_records"`` -- a bulk-file source has no
+    per-record fields to map, it just streams whole files -- so it drops
+    out of the required set for ``delivery_mode="bulk_file"``.
+    """
     nested = {k: data_dict.pop(k, None) for k in NESTED_FIELDS}
+    required = set(REQUIRED_NESTED_FIELDS)
+    if data_dict.get("delivery_mode") == "bulk_file":
+        required.discard("row_rules")
     errors = {
         field: ["Missing value"]
-        for field in REQUIRED_NESTED_FIELDS
+        for field in required
         if not nested.get(field)
     }
     if errors:
         raise toolkit.ValidationError(errors)
     return {k: v for k, v in nested.items() if v is not None}
+
+
+def _parse_host(endpoint_url: str) -> str:
+    """SFTP sources reuse ``endpoint_url`` for the host (no separate
+    "host" field) -- accepts either a bare hostname or a URL-ish
+    ``sftp://host[:port]`` string, matching what a provider would
+    plausibly type into the same field the HTTP flow uses for its URL."""
+    from urllib.parse import urlparse
+    if "://" in endpoint_url:
+        return urlparse(endpoint_url).hostname or endpoint_url
+    return endpoint_url.split("/")[0].split(":")[0]
+
+
+def _require_sftp_fields(data_dict: dict) -> None:
+    if data_dict.get("transport_type") != "sftp":
+        return
+    errors = {}
+    if not data_dict.get("host_key_fingerprint"):
+        errors["host_key_fingerprint"] = [
+            "Required for transport_type=sftp -- fetch and confirm it via "
+            "provider_source_fetch_host_key first"
+        ]
+    if errors:
+        raise toolkit.ValidationError(errors)
 
 
 @toolkit.side_effect_free
@@ -87,12 +120,19 @@ def provider_source_test_connection(context, data_dict):
     WITHOUT creating any HarvestObject/package/DataStore rows."""
     toolkit.check_access("provider_source_test_connection", context, data_dict)
 
-    from ckanext.providerharvest.auth_strategies.api_key import ApiKeyAuth
     from ckanext.providerharvest.secrets.base import SecretBundle
-    from ckanext.providerharvest.transport.direct_https import DirectHTTPSTransport
 
-    if data_dict.get("transport_type") != "http":
-        raise toolkit.ValidationError("Only transport_type=http is implemented so far")
+    transport_type = data_dict.get("transport_type")
+    if transport_type == "sftp":
+        return _test_sftp_connection(data_dict)
+    if transport_type != "http":
+        raise toolkit.ValidationError(
+            "transport_type %r is not yet implemented (available: http, sftp)"
+            % transport_type
+        )
+
+    from ckanext.providerharvest.auth_strategies.api_key import ApiKeyAuth
+    from ckanext.providerharvest.transport.direct_https import DirectHTTPSTransport
 
     secret = SecretBundle(fields=data_dict["credential_fields"])  # not yet persisted
     transport = DirectHTTPSTransport(
@@ -122,6 +162,50 @@ def provider_source_test_connection(context, data_dict):
     return {"sample_records": sample_records, "preview_rows": preview_rows}
 
 
+def _test_sftp_connection(data_dict):
+    """SFTP's dry run lists the remote directory (path/mtime/size only,
+    never file contents -- there's no per-record mapping to preview for a
+    bulk-file source) and requires a fingerprint to already be pinned, so
+    this exercises the exact same host-key check a real harvest run will
+    make, not a weaker one."""
+    from ckanext.providerharvest.secrets.base import SecretBundle
+    from ckanext.providerharvest.transport.sftp import SFTPTransport
+
+    _require_sftp_fields(data_dict)
+    secret = SecretBundle(fields=data_dict["credential_fields"])  # not yet persisted
+    transport = SFTPTransport(
+        _parse_host(data_dict["endpoint_url"]),
+        secret=secret,
+        port=int(data_dict.get("port") or 22),
+        remote_path=data_dict.get("remote_path") or "/",
+        glob_pattern=data_dict.get("glob_pattern") or "*",
+        pinned_host_key_fingerprint=data_dict["host_key_fingerprint"],
+    )
+    with transport:
+        page = transport.list_entries(cursor=None)
+
+    sample_files = [
+        {"ref": entry.ref, "mtime": entry.metadata.get("mtime"), "size": entry.metadata.get("size")}
+        for entry in page.entries[:20]
+    ]
+    return {"sample_files": sample_files}
+
+
+def provider_source_fetch_host_key(context, data_dict):
+    """Connects just far enough to read the SFTP server's host key and
+    returns its fingerprint for the provider to confirm, WITHOUT
+    authenticating or persisting anything -- the trust-on-first-use step
+    that must happen before a fingerprint can be pinned via
+    ``provider_source_create``'s ``host_key_fingerprint`` field."""
+    toolkit.check_access("provider_source_fetch_host_key", context, data_dict)
+
+    from ckanext.providerharvest.transport.sftp import fetch_host_key_fingerprint
+
+    host = _parse_host(data_dict["endpoint_url"])
+    fingerprint = fetch_host_key_fingerprint(host, int(data_dict.get("port") or 22))
+    return {"host": host, "fingerprint": fingerprint}
+
+
 def _rule_from_dict(d):
     from ckanext.providerharvest.mapping import FieldMappingRule
     return FieldMappingRule(
@@ -148,6 +232,7 @@ def provider_source_create(context, data_dict):
     if errors:
         raise toolkit.ValidationError(errors)
     data_dict.update(nested)
+    _require_sftp_fields(data_dict)
 
     owner_org = data_dict["owner_org"]
     # The secret's harvest_source_id column is bookkeeping/audit metadata
@@ -167,6 +252,13 @@ def provider_source_create(context, data_dict):
         "auth_opts": data_dict.get("auth_opts"),
         "delivery_mode": data_dict.get("delivery_mode", "api_records"),
     }
+    if data_dict["transport_type"] == "sftp":
+        config.update({
+            "host": _parse_host(data_dict["endpoint_url"]),
+            "port": int(data_dict.get("port") or 22),
+            "remote_path": data_dict.get("remote_path") or "/",
+            "glob_pattern": data_dict.get("glob_pattern") or "*",
+        })
 
     harvest_source = toolkit.get_action("harvest_source_create")(dict(context), {
         "url": data_dict["endpoint_url"],
@@ -179,7 +271,7 @@ def provider_source_create(context, data_dict):
     })
 
     profile = FieldMappingProfile(
-        row_rules=[_rule_from_dict(r) for r in data_dict["row_rules"]],
+        row_rules=[_rule_from_dict(r) for r in data_dict.get("row_rules", [])],
         dataset_defaults=data_dict.get("dataset_defaults", {}),
         resource_defaults=data_dict.get("resource_defaults", {}),
     )
@@ -192,6 +284,7 @@ def provider_source_create(context, data_dict):
         status="pending",
         notification_email=data_dict.get("notification_email"),
         notification_webhook_url=data_dict.get("notification_webhook_url"),
+        host_key_fingerprint=data_dict.get("host_key_fingerprint"),
         created=datetime.datetime.utcnow(),
     )
 
@@ -246,7 +339,9 @@ def provider_source_activate(context, data_dict):
     )
     profile = field_mapping_model.load_latest(harvest_source_id)
 
-    package_id, resource_id = ensure_provider_resource(context, harvest_source, profile)
+    package_id, resource_id = ensure_provider_resource(
+        context, harvest_source, profile, delivery_mode=provider_source.delivery_mode
+    )
     provider_source.ckan_package_id = package_id
     provider_source.ckan_resource_id = resource_id
     provider_source.status = "active"
@@ -257,12 +352,20 @@ def provider_source_activate(context, data_dict):
     return {"harvest_source_id": harvest_source_id, "status": "active"}
 
 
-def ensure_provider_resource(context, harvest_source: dict, profile: FieldMappingProfile):
-    """Idempotently creates the CKAN package/resource this provider
-    source's data lands in, using data.gov.gr's real 'dataset' scheming
-    schema fields (confirmed via scheming_dataset_schema_show), and
-    registers a matching 'data-service' entry so the DataStore query API
-    is a discoverable catalog entry, not just an un-cataloged endpoint.
+def ensure_provider_resource(context, harvest_source: dict, profile: FieldMappingProfile,
+                              *, delivery_mode: str = "api_records"):
+    """Idempotently creates the CKAN package this provider source's data
+    lands in, using data.gov.gr's real 'dataset' scheming schema fields
+    (confirmed via scheming_dataset_schema_show).
+
+    For ``delivery_mode="api_records"``, also creates the single
+    DataStore-backed resource every record load writes into, plus a
+    matching 'data-service' entry so the DataStore query API is a
+    discoverable catalog entry. For ``delivery_mode="bulk_file"`` there
+    is no such single resource to pre-create -- each remote file becomes
+    its own resource the first time ``import_stage`` streams it (see
+    ``FileResourceLoader``) -- so only the package is created and
+    ``resource_id`` comes back ``None``.
     """
     package_dict = dict(profile.dataset_defaults)
     # NOT harvest_source["name"]: ckanext-harvest's own HarvestSource is
@@ -277,6 +380,9 @@ def ensure_provider_resource(context, harvest_source: dict, profile: FieldMappin
     package_dict["type"] = "dataset"
 
     package = toolkit.get_action("package_create")(dict(context), package_dict)
+
+    if delivery_mode == "bulk_file":
+        return package["id"], None
 
     resource_dict = dict(profile.resource_defaults)
     resource_dict.update({
