@@ -23,8 +23,7 @@ from ckanext.harvest.model import HarvestObject
 
 from ckanext.providerharvest import notifications
 from ckanext.providerharvest.audit import OutboundRequestEvent
-from ckanext.providerharvest.auth_strategies.api_key import ApiKeyAuth
-from ckanext.providerharvest.auth_strategies.base import AuthStrategy
+from ckanext.providerharvest.auth_strategies import build_auth_strategy
 from ckanext.providerharvest.logic.validators import UnsafeNetworkTargetError
 from ckanext.providerharvest.loaders.datastore_loader import DataStoreLoader
 from ckanext.providerharvest.mapping import FieldMappingError
@@ -44,10 +43,6 @@ from ckanext.providerharvest.transport.sftp import SFTPTransport
 
 log = logging.getLogger(__name__)
 
-_AUTH_STRATEGIES: dict[str, type[AuthStrategy]] = {
-    "api_key": ApiKeyAuth,
-}
-
 #: Transports that connect over SSH (paramiko), sharing the exact same
 #: connection/host-key-pinning/auth code via transport.ssh_common -- only
 #: the file-listing/reading mechanics differ between them. See
@@ -64,15 +59,6 @@ BULK_FILE_TRANSPORT_TYPES = SSH_TRANSPORT_TYPES + ("ftp",)
 def default_secrets_backend() -> SecretsBackend:
     return EnvelopeSecretsBackend(repository=SqlAlchemySecretRepository())
 
-
-def _build_auth_strategy(auth_type: str) -> AuthStrategy:
-    strategy_cls = _AUTH_STRATEGIES.get(auth_type)
-    if strategy_cls is None:
-        raise toolkit.ValidationError(
-            "auth_type %r is not yet implemented (available: %s)"
-            % (auth_type, sorted(_AUTH_STRATEGIES))
-        )
-    return strategy_cls()
 
 
 class GenericProviderHarvester(HarvesterBase):
@@ -167,7 +153,10 @@ class GenericProviderHarvester(HarvesterBase):
             # private key) is decided from the secret's own shape inside
             # ssh_common.connect_and_authenticate instead, so this is
             # deliberately not called for the SSH transports below.
-            auth_strategy = _build_auth_strategy(config["auth_type"])
+            try:
+                auth_strategy = build_auth_strategy(config["auth_type"])
+            except ValueError as exc:
+                raise toolkit.ValidationError(str(exc)) from exc
             return DirectHTTPSTransport(
                 base_url=source.url,
                 auth_strategy=auth_strategy,

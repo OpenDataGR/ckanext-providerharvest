@@ -59,7 +59,18 @@
           <summary><strong>{{ _("HTTP API settings") }}</strong></summary>
 
           <fieldset>
-            <legend>{{ _("Authentication (API key)") }}</legend>
+            <legend>{{ _("Authentication") }}</legend>
+            <div class="form-group">
+              <label for="field-auth_type">{{ _("Method") }}</label>
+              <select id="field-auth_type" name="auth_type" class="form-control">
+                <option value="api_key" {{ "selected" if data.get('auth_type', 'api_key') == 'api_key' else "" }}>{{ _("API key") }}</option>
+                <option value="basic_auth" {{ "selected" if data.get('auth_type') == 'basic_auth' else "" }}>{{ _("HTTP Basic auth") }}</option>
+                <option value="oauth2_client_credentials" {{ "selected" if data.get('auth_type') == 'oauth2_client_credentials' else "" }}>{{ _("OAuth2 (client credentials)") }}</option>
+                <option value="mtls" {{ "selected" if data.get('auth_type') == 'mtls' else "" }}>{{ _("Mutual TLS (client certificate)") }}</option>
+              </select>
+              <span class="info-block">{{ _("Fill in only the fields for the method selected above.") }}</span>
+            </div>
+
             <div class="form-group">
               <label for="field-api_key">{{ _("API key") }}</label>
               <input id="field-api_key" name="api_key" type="password" class="form-control" autocomplete="new-password">
@@ -75,6 +86,44 @@
             <div class="form-group">
               <label for="field-api_key_name">{{ _("Header / parameter name") }}</label>
               <input id="field-api_key_name" name="api_key_name" type="text" class="form-control" value="{{ data.get('api_key_name', 'X-API-Key') }}">
+            </div>
+
+            <div class="form-group">
+              <label for="field-basic_username">{{ _("Basic auth: username") }}</label>
+              <input id="field-basic_username" name="basic_username" type="text" class="form-control" value="{{ data.get('basic_username', '') }}">
+            </div>
+            <div class="form-group">
+              <label for="field-basic_password">{{ _("Basic auth: password") }}</label>
+              <input id="field-basic_password" name="basic_password" type="password" class="form-control" autocomplete="new-password">
+              <span class="info-block">{{ _("Stored encrypted, never shown again.") }}</span>
+            </div>
+
+            <div class="form-group">
+              <label for="field-oauth2_client_id">{{ _("OAuth2: client ID") }}</label>
+              <input id="field-oauth2_client_id" name="oauth2_client_id" type="text" class="form-control" value="{{ data.get('oauth2_client_id', '') }}">
+            </div>
+            <div class="form-group">
+              <label for="field-oauth2_client_secret">{{ _("OAuth2: client secret") }}</label>
+              <input id="field-oauth2_client_secret" name="oauth2_client_secret" type="password" class="form-control" autocomplete="new-password">
+              <span class="info-block">{{ _("Stored encrypted, never shown again.") }}</span>
+            </div>
+            <div class="form-group">
+              <label for="field-oauth2_token_url">{{ _("OAuth2: token endpoint URL") }}</label>
+              <input id="field-oauth2_token_url" name="oauth2_token_url" type="text" class="form-control" value="{{ data.get('oauth2_token_url', '') }}" placeholder="https://provider.example.com/oauth/token">
+            </div>
+            <div class="form-group">
+              <label for="field-oauth2_scope">{{ _("OAuth2: scope (optional)") }}</label>
+              <input id="field-oauth2_scope" name="oauth2_scope" type="text" class="form-control" value="{{ data.get('oauth2_scope', '') }}">
+            </div>
+
+            <div class="form-group">
+              <label for="field-mtls_client_cert">{{ _("mTLS: client certificate (PEM)") }}</label>
+              <textarea id="field-mtls_client_cert" name="mtls_client_cert" class="form-control" rows="4"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="field-mtls_client_key">{{ _("mTLS: client private key (PEM)") }}</label>
+              <textarea id="field-mtls_client_key" name="mtls_client_key" class="form-control" rows="4"></textarea>
+              <span class="info-block">{{ _("Stored encrypted, never shown again.") }}</span>
             </div>
           </fieldset>
 

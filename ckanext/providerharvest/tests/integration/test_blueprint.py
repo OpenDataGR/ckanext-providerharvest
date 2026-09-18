@@ -336,3 +336,62 @@ class TestProviderUIBlueprint:
         config = json.loads(harvest_source["config"])
         assert config["transport_type"] == "ftp"
         assert config["use_tls"] is False
+
+    def test_http_basic_auth_register_via_web_form(self, app):
+        """The HTTP "Authentication" sub-selector added alongside
+        BasicAuth/OAuth2ClientCredentialsAuth/MTLSAuth -- catches any
+        field-name mismatch between source_form.html and
+        provider_ui._http_auth_payload before it reaches real credential
+        storage. No network call happens during registration itself
+        (only during test-connection/a real harvest run), so this
+        doesn't need the private-network allowance the SFTP/SCP/FTP
+        tests do."""
+        org = factories.Organization()
+        editor = factories.User()
+        helpers.call_action(
+            "organization_member_create",
+            {"ignore_auth": True},
+            id=org["id"], username=editor["name"], role="editor",
+        )
+        editor_environ = {"REMOTE_USER": editor["name"]}
+
+        resp = app.post(
+            "/provider-harvest/sources/new",
+            extra_environ=editor_environ,
+            data={
+                "name": "ui-basic-auth-test-source",
+                "title": "UI Basic Auth Test Source",
+                "owner_org": org["id"],
+                "transport_type": "http",
+                "endpoint_url": "https://provider.example.com/api/records",
+                "auth_type": "basic_auth",
+                "basic_username": "alice",
+                "basic_password": "s3cret",
+                "pagination_style": "page_number",
+                "items_path": "results",
+                "page_param": "page",
+                "row_rules-0-ckan_field": "id",
+                "row_rules-0-source_path": "id",
+                "row_rules-0-field_type": "integer",
+                "row_rules-0-is_primary_key": "on",
+                "dataset_title": "UI Basic Auth Test Dataset",
+                "dataset_notes": "Created by the blueprint basic-auth smoke test.",
+                "frequency": "MANUAL",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 200), resp.get_data(as_text=True)
+
+        from ckan.model import Package, Session
+        pkg = Session.query(Package).filter_by(
+            name="ui-basic-auth-test-source", type="harvest"
+        ).first()
+        assert pkg is not None, "provider_source_create was never actually called"
+
+        harvest_source = helpers.call_action(
+            "harvest_source_show", {"ignore_auth": True}, id=pkg.id
+        )
+        import json
+        config = json.loads(harvest_source["config"])
+        assert config["transport_type"] == "http"
+        assert config["auth_type"] == "basic_auth"

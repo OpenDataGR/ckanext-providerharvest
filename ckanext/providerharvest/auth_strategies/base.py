@@ -25,3 +25,9 @@ class AuthStrategy(abc.ABC):
         keys like ``headers`` and ``params`` (dicts) may already be present
         and must be merged into, not overwritten.
         """
+
+    def close(self) -> None:
+        """Optional cleanup hook, called by the transport when it closes.
+        A no-op for strategies that don't hold any resources (the
+        default, and every strategy except MTLSAuth, which uses this to
+        remove the temp files it writes client cert/key material to)."""

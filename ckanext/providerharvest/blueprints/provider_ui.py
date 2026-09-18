@@ -70,13 +70,48 @@ def _row_rules_from_form(form) -> list[dict]:
     return rules
 
 
-def _auth_payload(form) -> dict:
-    return {
-        "credential_fields": {"api_key": form.get("api_key", "").strip()},
-        "auth_opts": {
+def _http_auth_payload(form) -> dict:
+    """Dispatches on the "Authentication" sub-selector inside the HTTP
+    API settings section -- api_key (the original, still the default),
+    basic_auth, oauth2_client_credentials, or mtls, matching the
+    auth_strategies package's own AUTH_STRATEGIES registry. Also carries
+    pagination, since that's HTTP-specific too and lives in the same
+    section of the form.
+    """
+    auth_type = form.get("auth_type") or "api_key"
+    if auth_type == "basic_auth":
+        credential_fields = {
+            "username": form.get("basic_username", "").strip(),
+            "password": form.get("basic_password", "").strip(),
+        }
+        auth_opts = {}
+    elif auth_type == "oauth2_client_credentials":
+        credential_fields = {
+            "client_id": form.get("oauth2_client_id", "").strip(),
+            "client_secret": form.get("oauth2_client_secret", "").strip(),
+        }
+        auth_opts = {
+            "token_url": form.get("oauth2_token_url", "").strip(),
+            "scope": form.get("oauth2_scope", "").strip() or None,
+        }
+    elif auth_type == "mtls":
+        credential_fields = {
+            "client_cert_pem": form.get("mtls_client_cert", "").strip(),
+            "client_key_pem": form.get("mtls_client_key", "").strip(),
+        }
+        auth_opts = {}
+    else:
+        auth_type = "api_key"
+        credential_fields = {"api_key": form.get("api_key", "").strip()}
+        auth_opts = {
             "location": form.get("api_key_location") or "header",
             "name": form.get("api_key_name", "").strip() or "X-API-Key",
-        },
+        }
+
+    return {
+        "auth_type": auth_type,
+        "credential_fields": credential_fields,
+        "auth_opts": auth_opts,
         "pagination": {
             "style": form.get("pagination_style") or "page_number",
             "items_path": form.get("items_path", "").strip() or "results",
@@ -200,9 +235,8 @@ def _payload_from_form(form) -> dict:
     elif transport_type == "ftp":
         payload.update(_ftp_payload(form))
     else:
-        payload["auth_type"] = "api_key"
         payload["row_rules"] = _row_rules_from_form(form)
-        payload.update(_auth_payload(form))
+        payload.update(_http_auth_payload(form))
     return payload
 
 

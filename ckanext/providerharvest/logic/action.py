@@ -169,13 +169,22 @@ def provider_source_test_connection(context, data_dict):
             % (transport_type, ", ".join(SSH_TRANSPORT_TYPES))
         )
 
-    from ckanext.providerharvest.auth_strategies.api_key import ApiKeyAuth
+    from ckanext.providerharvest.auth_strategies import build_auth_strategy
     from ckanext.providerharvest.transport.direct_https import DirectHTTPSTransport
+
+    # NOT a hardcoded ApiKeyAuth(): this dry run must exercise the same
+    # auth_type the provider actually selected (basic_auth/oauth2/mtls),
+    # or "test connection" would silently validate the wrong credential
+    # shape for every non-api_key source.
+    try:
+        auth_strategy = build_auth_strategy(data_dict.get("auth_type"))
+    except ValueError as exc:
+        raise toolkit.ValidationError(str(exc)) from exc
 
     secret = SecretBundle(fields=data_dict["credential_fields"])  # not yet persisted
     transport = DirectHTTPSTransport(
         base_url=data_dict["endpoint_url"],
-        auth_strategy=ApiKeyAuth(),
+        auth_strategy=auth_strategy,
         secret=secret,
         pagination=data_dict.get("pagination", {}),
         auth_opts=data_dict.get("auth_opts"),

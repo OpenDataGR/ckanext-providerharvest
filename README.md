@@ -41,10 +41,18 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
     measures file size by seeking) -- so both download to a throwaway
     local temp file first (`transport/_local_download.py`), deleted the
     moment the caller is done with it.
-- `ApiKeyAuth` -- the only HTTP auth strategy implemented so far (irrelevant
-  for SFTP/SCP/FTP, which authenticate from the secret's own shape --
-  username + password or private key -- instead of the `AuthStrategy`
-  interface).
+- HTTP auth strategies (`auth_strategies/`, registry in
+  `auth_strategies/__init__.py` -- shared by both real harvest runs and
+  the "test connection" dry run, so they can't drift out of sync):
+  `ApiKeyAuth`, `BasicAuth` (RFC 7617), `OAuth2ClientCredentialsAuth`
+  (RFC 6749 section 4.4, token fetched from a provider-configured token
+  endpoint -- itself re-validated by the same SSRF-class check as every
+  other outbound target -- and cached until shortly before expiry), and
+  `MTLSAuth` (client cert presented during the TLS handshake itself;
+  writes the secret's PEM strings to 0600 temp files removed via a
+  `close()` hook every `AuthStrategy` now has, since `requests`/urllib3
+  need real file paths, not in-memory PEM). Irrelevant for SFTP/SCP/FTP,
+  which authenticate from the secret's own shape instead.
 - `EnvelopeSecretsBackend` -- AES-256-GCM envelope encryption for provider
   credentials, master key outside the CKAN database.
 - Network-target validator (`logic/validators.py`) -- the SSRF-class
@@ -68,12 +76,26 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
   fields otherwise -- port/remote_path/glob, username + password-or-
   private-key auth, and the "Fetch host key" trust-on-first-use step), and
   an "FTP / FTPS" section (with the `use_tls`/plain-FTP-acknowledgment
-  checkboxes). Field-mapping rows are plain repeatable form fields for
-  now, not a dynamic JS editor -- see the blueprint's module docstring.
+  checkboxes). The HTTP API section also has an "Authentication" method
+  selector (API key / Basic / OAuth2 / mTLS) alongside pagination.
+  Field-mapping rows are plain repeatable form fields for now, not a
+  dynamic JS editor -- see the blueprint's module docstring.
 
-**Not yet built:** Basic/OAuth2/mTLS auth, and the broker/relay transport
-(Phase 1.5 stretch items DESIGN.md marks as stub-only); a real dynamic
-field-mapping editor and richer approval-workflow UI (Phase 2 follow-ons).
+**Not yet built:** the broker/relay transport (DESIGN.md marks it
+stub-only); a real dynamic field-mapping editor and richer
+approval-workflow UI (Phase 2 follow-ons).
+
+**Verification status:** Basic auth and OAuth2 client-credentials are
+backed by unit tests (`test_auth_strategies.py`, fakes -- no real network)
+and a Docker-replica integration test
+(`test_e2e_http_auth_strategies.py`, against `docker/mock-provider/`'s
+`/records-basic` and `/records-bearer` + `/oauth/token` endpoints) that
+has not yet been run in CI (implemented together with the rest of this
+phase, verification batched for the end of it). mTLS is unit-tested only
+-- no Docker test, for the same reason FTPS isn't exercised there either
+(see `transport/ftp.py`'s docstring): a self-signed cert in a disposable
+test container would correctly fail the real certificate verification
+this extension never disables.
 
 ## Development
 

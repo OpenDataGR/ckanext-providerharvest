@@ -97,6 +97,9 @@ class DirectHTTPSTransport(Transport):
         if self._session is not None:
             self._session.close()
             self._session = None
+        # A no-op for most strategies; MTLSAuth uses this to remove the
+        # temp files it wrote client cert/key material to.
+        self._auth_strategy.close()
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         assert self._session is not None, "connect() must be called before making requests"
