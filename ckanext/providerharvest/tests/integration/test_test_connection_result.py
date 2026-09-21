@@ -23,6 +23,12 @@ test catching them first:
    submitted field preserved and the result/error shown inline instead
    of on a page of its own -- see provider_ui.test_connection's
    docstring.
+
+3. That fix for (2) still silently dropped a 4th+ field-mapping row: the
+   form only ever pre-rendered a fixed 3 rows server-side, and re-
+   populating values from the submitted data never looped past that.
+   _row_rule_slots_for() now sizes the loop to whatever was actually
+   submitted (at least 3, on a fresh form).
 """
 
 from __future__ import annotations
@@ -71,10 +77,9 @@ class TestConnectionRendersInlineOnTheForm:
         """Any real public endpoint reproduces the original crash -- the
         bug was in the template's branching, not anything
         endpoint-specific. Uses jsonplaceholder.typicode.com (reachable
-        from CI, a free public test API) with cursor-style pagination
-        and the form's own pre-filled default items_path ("results"),
-        matching exactly what was actually submitted when this was
-        first found."""
+        from CI, a free public test API), whose /users response is a
+        bare JSON array, hence items_path="$" (the whole body is the
+        list)."""
         org = factories.Organization()
         sysadmin = factories.Sysadmin()
         resp = self._submit(app, sysadmin, org)
@@ -105,3 +110,31 @@ class TestConnectionRendersInlineOnTheForm:
         assert "jsonplaceholder.typicode.com" in body
         assert 'value="id"' in body
         assert 'value="name"' in body
+
+    def test_error_result_preserves_a_fourth_field_mapping_row(self, app):
+        """source_form.html only ever pre-rendered 3 field-mapping rows
+        server-side -- rows added client-side beyond that were silently
+        dropped on a re-render after a validation error, since the loop
+        that re-populates values from the submitted data never covered
+        a 4th+ index. Submitting a 4th row (index 3) and forcing the
+        same no-primary-key error as above checks it now survives too."""
+        org = factories.Organization()
+        sysadmin = factories.Sysadmin()
+        resp = self._submit(
+            app, sysadmin, org,
+            name="jsonplaceholder-four-rows",
+            **{
+                "row_rules-0-is_primary_key": "",  # no primary key -> real validation error
+                "row_rules-2-ckan_field": "username",
+                "row_rules-2-source_path": "username",
+                "row_rules-2-field_type": "text",
+                "row_rules-3-ckan_field": "email",
+                "row_rules-3-source_path": "email",
+                "row_rules-3-field_type": "text",
+            },
+        )
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        body = resp.get_data(as_text=True)
+        assert "Connection failed" in body
+        assert 'value="username"' in body
+        assert 'value="email"' in body

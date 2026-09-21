@@ -37,9 +37,11 @@ providerharvest = flask.Blueprint(
     "providerharvest", __name__, url_prefix="/provider-harvest"
 )
 
-#: Pre-rendered field-mapping rows in the form before any JS add/remove;
-#: covers the common case without scrolling, more can be added client-side.
-ROW_RULE_SLOTS = range(3)
+#: Minimum pre-rendered field-mapping rows in the form before any JS
+#: add/remove; covers the common case without scrolling, more can be
+#: added client-side. See _row_rule_slots_for for what happens beyond
+#: this on a re-render.
+MIN_ROW_RULE_SLOTS = 3
 _ROW_RULE_INDEX_RE = re.compile(r"^row_rules-(\d+)-ckan_field$")
 FIELD_TYPES = ["text", "numeric", "integer", "boolean", "timestamp"]
 TRANSFORMS = ["", "strip", "lower"]
@@ -61,16 +63,36 @@ def _orgs_for_current_user() -> list[dict]:
         return []
 
 
-def _row_rules_from_form(form) -> list[dict]:
+def _row_rule_indices(keys) -> list[int]:
     # Scans every row_rules-<n>-ckan_field key present rather than
     # stopping at the first missing index -- a JS "remove row" can leave
     # a gap (e.g. rows 0 and 2 present, 1 removed), see module docstring.
-    indices = sorted({
+    return sorted({
         int(match.group(1))
-        for key in form.keys()
+        for key in keys
         for match in [_ROW_RULE_INDEX_RE.match(key)]
         if match
     })
+
+
+def _row_rule_slots_for(data) -> range:
+    """How many field-mapping rows source_form.html should pre-render:
+    at least MIN_ROW_RULE_SLOTS empty ones on a fresh form, or enough to
+    cover every row actually submitted (including any gap from an
+    out-of-order JS removal) when re-rendering after a validation error
+    -- otherwise a 4th+ row's typed values would silently vanish, since
+    the template only ever looped over a fixed 3 slots before."""
+    try:
+        keys = data.keys()
+    except AttributeError:
+        keys = []
+    indices = _row_rule_indices(keys)
+    highest = indices[-1] if indices else -1
+    return range(max(MIN_ROW_RULE_SLOTS, highest + 1))
+
+
+def _row_rules_from_form(form) -> list[dict]:
+    indices = _row_rule_indices(form.keys())
     rules = []
     for i in indices:
         ckan_field = form.get("row_rules-%d-ckan_field" % i, "").strip()
@@ -195,7 +217,7 @@ def _form_template_vars(data, errors=None) -> dict:
         "field_types": FIELD_TYPES,
         "transforms": TRANSFORMS,
         "frequencies": FREQUENCIES,
-        "row_rule_slots": ROW_RULE_SLOTS,
+        "row_rule_slots": _row_rule_slots_for(data),
     }
 
 
