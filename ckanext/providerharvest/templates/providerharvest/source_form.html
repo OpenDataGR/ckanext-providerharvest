@@ -18,6 +18,30 @@
         </div>
       {% endif %}
 
+      {# Result of a "Test connection" click -- shown inline on this same
+         form (every field below still has whatever was submitted), not a
+         separate result page with a "back to form" link that throws all
+         of it away. See provider_ui.test_connection's own docstring. #}
+      {% if test_error %}
+        <div class="alert alert-error">
+          <strong>{{ _("Connection failed:") }}</strong> {{ test_error }}
+        </div>
+      {% elif test_result %}
+        <div class="alert alert-success">{{ _("Connected successfully -- nothing was saved or written.") }}</div>
+        {% if test_result.get('sample_files') is not none %}
+          <h3>{{ _("Matching files on the server") }}</h3>
+          <p class="info-block">{{ _("Whole files only -- SFTP sources stream these as CKAN resources, there's no per-record content to preview.") }}</p>
+          <pre>{{ test_result.sample_files | tojson(indent=2) }}</pre>
+        {% else %}
+          <h3>{{ _("Sample records (raw)") }}</h3>
+          <pre>{{ test_result.sample_records | tojson(indent=2) }}</pre>
+          {% if test_result.preview_rows %}
+            <h3>{{ _("Mapped preview") }}</h3>
+            <pre>{{ test_result.preview_rows | tojson(indent=2) }}</pre>
+          {% endif %}
+        {% endif %}
+      {% endif %}
+
       <form method="post" action="{{ h.url_for('providerharvest.new_source') }}">
         <fieldset>
           <legend>{{ _("Basics") }}</legend>
@@ -164,20 +188,20 @@
               <tbody id="row-rules-body">
                 {% for i in row_rule_slots %}
                   <tr>
-                    <td><input name="row_rules-{{ i }}-ckan_field" type="text" class="form-control"></td>
-                    <td><input name="row_rules-{{ i }}-source_path" type="text" class="form-control" placeholder="e.g. id or data.id"></td>
+                    <td><input name="row_rules-{{ i }}-ckan_field" type="text" class="form-control" value="{{ data.get('row_rules-%d-ckan_field' % i, '') }}"></td>
+                    <td><input name="row_rules-{{ i }}-source_path" type="text" class="form-control" placeholder="e.g. id or data.id" value="{{ data.get('row_rules-%d-source_path' % i, '') }}"></td>
                     <td>
                       <select name="row_rules-{{ i }}-field_type" class="form-control">
-                        {% for ft in field_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}
+                        {% for ft in field_types %}<option value="{{ ft }}" {{ "selected" if data.get('row_rules-%d-field_type' % i, '') == ft else "" }}>{{ ft }}</option>{% endfor %}
                       </select>
                     </td>
                     <td>
                       <select name="row_rules-{{ i }}-transform" class="form-control">
-                        {% for t in transforms %}<option value="{{ t }}">{{ t or _("none") }}</option>{% endfor %}
+                        {% for t in transforms %}<option value="{{ t }}" {{ "selected" if data.get('row_rules-%d-transform' % i, '') == t else "" }}>{{ t or _("none") }}</option>{% endfor %}
                       </select>
                     </td>
-                    <td><input name="row_rules-{{ i }}-is_primary_key" type="checkbox"></td>
-                    <td><input name="row_rules-{{ i }}-required" type="checkbox"></td>
+                    <td><input name="row_rules-{{ i }}-is_primary_key" type="checkbox" {{ "checked" if data.get('row_rules-%d-is_primary_key' % i) else "" }}></td>
+                    <td><input name="row_rules-{{ i }}-required" type="checkbox" {{ "checked" if data.get('row_rules-%d-required' % i) else "" }}></td>
                     <td><button type="button" class="btn btn-danger row-rules-remove" formnovalidate>{{ _("Remove") }}</button></td>
                   </tr>
                 {% endfor %}

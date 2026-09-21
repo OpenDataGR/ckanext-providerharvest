@@ -306,6 +306,14 @@ def new_source():
 
 
 def test_connection():
+    """Renders the same source_form.html the provider was already
+    filling in (all fields preserved), with the test result/error shown
+    inline -- NOT a separate result page with a "back to form" link,
+    which used to throw away everything they'd typed the moment a test
+    failed (a real usability bug found via actually using this UI, not
+    just its automated tests). Same pattern fetch_host_key() already
+    uses for the same reason.
+    """
     if not toolkit.g.user:
         return toolkit.redirect_to("user.login")
 
@@ -320,10 +328,10 @@ def test_connection():
     except Exception as exc:  # noqa: BLE001 -- shown to the provider verbatim, this IS the diagnostic
         error = str(exc)
 
-    template_vars = _form_template_vars(form)
-    template_vars.update({"result": result, "error": error})
+    template_vars = _form_template_vars(form.to_dict())
+    template_vars.update({"test_result": result, "test_error": error})
     return toolkit.render(
-        "providerharvest/test_connection_result.html", extra_vars=template_vars
+        "providerharvest/source_form.html", extra_vars=template_vars
     )
 
 
