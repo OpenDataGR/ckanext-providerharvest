@@ -8,6 +8,13 @@ sources), and served to consumers through DataStore's own query API.
 
 See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
 
+**This CKAN plugin is being superseded by an external service** (deploy
+independence, fault isolation, and a smaller blast radius for
+provider-supplied outbound calls were the deciding factors) -- see
+[service/README.md](service/README.md) for that work in progress. This
+plugin stays the reference implementation and CI-verified baseline
+until the external service reaches parity.
+
 ## Status
 
 **Phase 1 (MVP), Phase 1.5 (file transports), and Phase 2 (self-service UI +

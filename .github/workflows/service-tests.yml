@@ -1,0 +1,34 @@
+name: providerharvest-service tests
+
+# Plain Python job, no Docker/CKAN at all -- that absence is the actual
+# point being verified: service/providerharvest_service/engine was
+# ported out of ckanext-providerharvest specifically to run standalone
+# (see service/README.md). If this ever needed CKAN to pass, the split
+# would have failed silently.
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [master]
+    paths:
+      - "service/**"
+      - ".github/workflows/service-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install providerharvest-service
+        run: pip install -e ".[dev]"
+
+      - name: Run the engine's test suite
+        run: pytest tests -q
