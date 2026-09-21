@@ -14,7 +14,7 @@
       {% else %}
         <div class="alert alert-success">{{ _("Connected successfully -- nothing was saved or written.") }}</div>
 
-        {% if result.sample_files is not none %}
+        {% if result.get('sample_files') is not none %}
           <h3>{{ _("Matching files on the server") }}</h3>
           <p class="info-block">{{ _("Whole files only -- SFTP sources stream these as CKAN resources, there's no per-record content to preview.") }}</p>
           <pre>{{ result.sample_files | tojson(indent=2) }}</pre>
