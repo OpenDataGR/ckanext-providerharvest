@@ -189,6 +189,13 @@ CKAN's admin UI/API is at `http://localhost:5000` (sysadmin login from
 reachable at `http://localhost:8983/solr/ckan` for debugging the search
 index.
 
+The `ckan-worker` container also creates a demo organization
+(`DEMO_ORG_NAME`/`DEMO_ORG_TITLE` in `.env`, default `demo-provider-org`)
+with the sysadmin as its admin member, so
+`http://localhost:5000/provider-harvest/sources/new` already has an
+organization to pick without creating one by hand first. Set
+`DEMO_ORG_NAME` to an empty string to skip this.
+
 To tear down (keeping the `.env`-configured data volumes):
 
 ```bash

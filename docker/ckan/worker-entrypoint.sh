@@ -64,6 +64,32 @@ echo "[worker] ensuring ${CKAN_SYSADMIN_NAME} has sysadmin rights"
 "${CKAN_CLI[@]}" sysadmin add "${CKAN_SYSADMIN_NAME}" \
     || echo "[worker] 'sysadmin add' errored (likely already sysadmin) -- continuing"
 
+# CKAN core has no `ckan organization create` CLI command (only
+# ckan/cli/{user,sysadmin,dataset,...}.py exist, no organization.py), so
+# this goes through the Action API instead, the same way a browser
+# would -- with a short-lived token minted just for this. Organizations
+# created this way automatically make the creator (the sysadmin) an
+# admin member, so opening the self-service "Register a provider
+# source" form right after `docker compose up` already has an org to
+# pick, instead of a first-time visitor needing to create one via
+# CKAN's own org-admin UI before this extension's own pages are of any
+# use at all.
+DEMO_ORG_NAME="${DEMO_ORG_NAME:-demo-provider-org}"
+if [[ -n "${DEMO_ORG_NAME}" ]]; then
+    if curl -sf "${CKAN_WEB_URL}/api/3/action/organization_show?id=${DEMO_ORG_NAME}" >/dev/null 2>&1; then
+        echo "[worker] demo organization '${DEMO_ORG_NAME}' already exists"
+    else
+        echo "[worker] creating demo organization '${DEMO_ORG_NAME}'"
+        DEMO_ORG_TOKEN=$("${CKAN_CLI[@]}" user token add "${CKAN_SYSADMIN_NAME}" bootstrap-demo-org | tail -n 1 | tr -d '\t')
+        curl -sf -X POST "${CKAN_WEB_URL}/api/3/action/organization_create" \
+            -H "Authorization: ${DEMO_ORG_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\": \"${DEMO_ORG_NAME}\", \"title\": \"${DEMO_ORG_TITLE:-Demo Provider Org}\"}" \
+            >/dev/null \
+            || echo "[worker] 'organization_create' errored -- continuing"
+    fi
+fi
+
 # docker-entrypoint-initdb.d/20_create_datastore.sh only creates the
 # datastore_ro role and the datastore database -- CKAN's own install
 # docs are explicit that `ckan datastore set-permissions` still has to
