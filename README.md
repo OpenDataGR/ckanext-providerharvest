@@ -11,9 +11,15 @@ See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
 **This CKAN plugin is being superseded by an external service** (deploy
 independence, fault isolation, and a smaller blast radius for
 provider-supplied outbound calls were the deciding factors) -- see
-[service/README.md](service/README.md) for that work in progress. This
-plugin stays the reference implementation and CI-verified baseline
-until the external service reaches parity.
+[OpenDataGR/loader-data-gov-gr](https://github.com/OpenDataGR/loader-data-gov-gr)
+(private) for that work in progress, serving
+[loader.data.gov.gr](https://loader.data.gov.gr). It started as a
+`service/` directory here (the engine modules -- transports, auth
+strategies, secrets, mapping -- were already CKAN-agnostic, so porting
+them out was mechanical, not a rewrite) and was split into its own repo
+with full history once the shape settled enough to need its own CI and
+deploy pipeline. This plugin stays the reference implementation and
+CI-verified baseline until the external service reaches parity.
 
 ## Status
 
