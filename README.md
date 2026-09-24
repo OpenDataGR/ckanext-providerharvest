@@ -8,18 +8,27 @@ sources), and served to consumers through DataStore's own query API.
 
 See [DESIGN.md](DESIGN.md) for the full design, rationale, and rollout plan.
 
-**This CKAN plugin is being superseded by an external service** (deploy
+**Development on this plugin has stopped.** It was never deployed to
+production -- no real provider ever registered a source through it --
+so there was no live system to protect by keeping it running, and all
+further work moved to an external service instead (deploy
 independence, fault isolation, and a smaller blast radius for
-provider-supplied outbound calls were the deciding factors) -- see
+provider-supplied outbound calls were the deciding factors): see
 [OpenDataGR/loader-data-gov-gr](https://github.com/OpenDataGR/loader-data-gov-gr)
-(private) for that work in progress, serving
-[loader.data.gov.gr](https://loader.data.gov.gr). It started as a
-`service/` directory here (the engine modules -- transports, auth
-strategies, secrets, mapping -- were already CKAN-agnostic, so porting
-them out was mechanical, not a rewrite) and was split into its own repo
-with full history once the shape settled enough to need its own CI and
-deploy pipeline. This plugin stays the reference implementation and
-CI-verified baseline until the external service reaches parity.
+(private), serving [loader.data.gov.gr](https://loader.data.gov.gr).
+That service does not yet have this plugin's full feature set
+(registration, admin approval, scheduled harvesting are all still
+being rebuilt there) -- it is the active project, this one is not.
+
+This repo stays up as a reference only: the engine modules (transports,
+auth strategies, secrets, mapping) were already CKAN-agnostic and were
+ported into the new service essentially verbatim (via a `git subtree
+split`, so full history carried over), but the registration form's
+validation rules, the admin-approval state machine, and how a harvest
+run actually chains transport -> mapping -> loader together only exist
+here for now, as the working example the new service's remaining
+endpoints need to replicate. Don't build new features here; port them
+to `loader-data-gov-gr` instead.
 
 ## Status
 
